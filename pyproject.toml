@@ -1,0 +1,31 @@
+[project]
+name = "bitnp-sound"
+version = "0.1.0"
+description = "Mode-agnostic sound service scaffold for the distributed AI VTuber system."
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[project.scripts]
+sound-health = "sound.health:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sound"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = ["-ra", "--strict-config", "--strict-markers"]
+filterwarnings = ["error"]
+markers = [
+    "real_adapter: opt-in smoke tests for live or fake-local real adapter boundaries",
+]
