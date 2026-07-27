@@ -3,6 +3,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, NewType, Protocol, TypeAlias
 
+from sound.rtp_playback import RtpPlaybackReceiver, RtpPlaybackState
+
+__all__ = ["RtpPlaybackReceiver", "RtpPlaybackState"]
+
 SegmentId = NewType("SegmentId", str)
 PlaybackTimestampMs = NewType("PlaybackTimestampMs", int)
 
