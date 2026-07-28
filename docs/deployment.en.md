@@ -8,16 +8,16 @@ Copy `.env.example` into deployment configuration and set these values outside v
 | --- | --- |
 | `ORCHESTRATOR_WS_URL` | Orchestrator's `wss://` control URL. The TLS certificate must be trusted by the Sound host. |
 | `TRUSTED_LAN_TOKEN` | The trusted-LAN bearer token. Keep the actual value in the deployment secret store. It is required with WSS. |
-| `SOUND_RTP_STREAM_ID` | The stable sink identity that Orchestrator commands. |
+| `SOUND_RTP_STREAM_ID` | The stable sink identity that Orchestrator commands. It must equal Mic's `BITNP_MIC_RTP_STREAM_ID` for the onsite loop. |
 | `SOUND_RTP_BIND_HOST` | Local address for the UDP listener. It defaults to `0.0.0.0` when unset. |
 | `SOUND_RTP_BIND_PORT` | UDP listener port, from 1 through 65535. |
 | `SOUND_RTP_ADVERTISED_HOST` | Address Orchestrator uses to send UDP RTP to this host. |
-| `SOUND_TRACE_ID`, `SOUND_SESSION_ID` | Optional registration envelope identifiers. Both default to `sound-receive`. |
+| `SOUND_TRACE_ID`, `SOUND_SESSION_ID` | Optional registration envelope identifiers. `SOUND_SESSION_ID` must equal Mic's `BITNP_SESSION_ID` for the onsite loop. |
 | `BITNP_PLAYBACK_DEVICE` | Optional PortAudio device. Empty or `default` uses the system default. A numeric index or device-name query selects another output. |
 
 `SOUND_RTP_BIND_PORT` is the desired local port. `sound-receive` registers the actual bound port with Orchestrator, so the command must use that registered port and the configured stream ID. Allow the selected UDP port only from the trusted Orchestrator network path. Never commit the bearer token, a private key, or generated certificates.
 
-Start the runtime with `uv run sound-receive`. It binds UDP before making the WSS connection, sends `media.rtp.sink.register`, then waits for the command. A valid command must use L16, 16 kHz, mono, payload type 96, 320 samples per frame, the registered endpoint, and its SSRC.
+Start the runtime with `uv run sound-receive`. It binds UDP before making the WSS connection, sends `media.rtp.sink.register`, then waits for the command. A valid command must use L16, 16 kHz, mono, payload type 96, 320 samples per frame, the registered endpoint, and its SSRC. Sound has no onsite mode setting and accepts generated RTP only from the Orchestrator hub.
 
 `ws://` is rejected in production. The only exception is a loopback test URL whose host is `127.0.0.1`, `localhost`, or `::1`, with `SOUND_ALLOW_LOOPBACK_WS=true`. That switch is test-only. Don't set it for deployment and don't use it to bypass WSS or TLS.
 
