@@ -1,5 +1,6 @@
 from sound.playback import (
     AudioMetadata,
+    JsonObject,
     ManualPlaybackClock,
     PlaybackService,
     SegmentId,
@@ -17,7 +18,7 @@ class RecordingSink:
         self.events.append(event)
 
 
-def play_envelope(segment_id: str, command_id: str, duration_ms: int) -> dict[str, object]:
+def play_envelope(segment_id: str, command_id: str, duration_ms: int) -> JsonObject:
     return {
         "schema_version": "1.0.0",
         "event_type": "sound.play.command",
@@ -43,7 +44,7 @@ def play_envelope(segment_id: str, command_id: str, duration_ms: int) -> dict[st
     }
 
 
-def cancel_envelope(segment_id: str) -> dict[str, object]:
+def cancel_envelope(segment_id: str) -> JsonObject:
     return {
         "schema_version": "1.0.0",
         "event_type": "cancel",

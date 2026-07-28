@@ -1,7 +1,7 @@
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, NewType, Protocol, TypeAlias
+from typing import Literal, NewType, Protocol
 
 from sound.rtp_playback import RtpPlaybackReceiver, RtpPlaybackState
 
@@ -10,8 +10,8 @@ __all__ = ["RtpPlaybackReceiver", "RtpPlaybackState"]
 SegmentId = NewType("SegmentId", str)
 PlaybackTimestampMs = NewType("PlaybackTimestampMs", int)
 
-JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
-JsonObject: TypeAlias = Mapping[str, JsonValue]
+type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
+type JsonObject = Mapping[str, JsonValue]
 
 
 @dataclass(frozen=True, slots=True)

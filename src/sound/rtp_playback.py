@@ -1,6 +1,6 @@
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Final, NewType, assert_never
+from typing import Final, NewType, Protocol, assert_never
 
 StreamId = NewType("StreamId", str)
 RtpTimestamp = NewType("RtpTimestamp", int)
@@ -24,9 +24,26 @@ class RtpPlaybackState:
 
 
 @dataclass(frozen=True, slots=True)
+class L16PlaybackFrame:
+    stream_id: StreamId
+    sample_rate: int
+    channels: int
+    payload: bytes
+
+
+class L16PlaybackSink(Protocol):
+    def write(self, frame: L16PlaybackFrame) -> None: ...
+
+    def close_stream(self, stream_id: str) -> None: ...
+
+    def close(self) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
 class _AnnouncedStream:
     sample_rate: int
     channels: int
+    expected_ssrc: int | None
     status: StreamStatus
     playback_position_samples: PlaybackPositionSamples
 
@@ -34,22 +51,42 @@ class _AnnouncedStream:
 @dataclass(frozen=True, slots=True)
 class _L16RtpPacket:
     timestamp: RtpTimestamp
+    ssrc: int
     l16_sample_count: int
+    payload: bytes
 
 
 class RtpPlaybackReceiver:
     """Tracks deterministic L16 RTP playback for Orchestrator-announced streams."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, playback_sink: L16PlaybackSink | None = None) -> None:
         self._streams: dict[StreamId, _AnnouncedStream] = {}
+        self._playback_sink = playback_sink
         self.playback_states: list[RtpPlaybackState] = []
 
-    def announce_stream(self, *, stream_id: str, sample_rate: int, channels: int) -> None:
-        if stream_id == "" or sample_rate <= 0 or channels <= 0:
+    def announce_stream(
+        self,
+        *,
+        stream_id: str,
+        sample_rate: int,
+        channels: int,
+        expected_ssrc: int | None = None,
+    ) -> None:
+        if (
+            stream_id == ""
+            or sample_rate <= 0
+            or channels <= 0
+            or (expected_ssrc is not None and not 0 < expected_ssrc <= 0xFFFF_FFFF)
+        ):
             return
-        self._streams[StreamId(stream_id)] = _AnnouncedStream(
+        resolved_stream_id = StreamId(stream_id)
+        existing_stream = self._streams.get(resolved_stream_id)
+        if existing_stream is not None and self._playback_sink is not None:
+            self._playback_sink.close_stream(stream_id)
+        self._streams[resolved_stream_id] = _AnnouncedStream(
             sample_rate=sample_rate,
             channels=channels,
+            expected_ssrc=expected_ssrc,
             status=StreamStatus.ACTIVE,
             playback_position_samples=PlaybackPositionSamples(0),
         )
@@ -60,6 +97,8 @@ class RtpPlaybackReceiver:
         if stream is None:
             return
         self._streams[resolved_stream_id] = replace(stream, status=StreamStatus.CANCELLED)
+        if self._playback_sink is not None:
+            self._playback_sink.close_stream(stream_id)
 
     def receive_packet(self, packet: bytes, *, stream_id: str | None = None) -> None:
         parsed_packet = _parse_l16_rtp_packet(packet)
@@ -70,6 +109,8 @@ class RtpPlaybackReceiver:
             return
         stream = self._streams.get(resolved_stream_id)
         if stream is None:
+            return
+        if stream.expected_ssrc is not None and parsed_packet.ssrc != stream.expected_ssrc:
             return
         if parsed_packet.l16_sample_count % stream.channels != 0:
             return
@@ -83,6 +124,15 @@ class RtpPlaybackReceiver:
                 return
             case unreachable:
                 assert_never(unreachable)
+        if self._playback_sink is not None:
+            self._playback_sink.write(
+                L16PlaybackFrame(
+                    stream_id=resolved_stream_id,
+                    sample_rate=stream.sample_rate,
+                    channels=stream.channels,
+                    payload=parsed_packet.payload,
+                )
+            )
         self._streams[resolved_stream_id] = replace(
             stream,
             playback_position_samples=playback_position,
@@ -94,6 +144,10 @@ class RtpPlaybackReceiver:
                 playback_position_samples=playback_position,
             )
         )
+
+    def close(self) -> None:
+        if self._playback_sink is not None:
+            self._playback_sink.close()
 
     def _resolve_stream_id(self, stream_id: str | None) -> StreamId | None:
         if stream_id is not None:
@@ -132,5 +186,7 @@ def _parse_l16_rtp_packet(packet: bytes) -> _L16RtpPacket | None:
         return None
     return _L16RtpPacket(
         timestamp=RtpTimestamp(int.from_bytes(packet[4:8], byteorder="big")),
+        ssrc=ssrc,
         l16_sample_count=len(payload) // 2,
+        payload=payload,
     )

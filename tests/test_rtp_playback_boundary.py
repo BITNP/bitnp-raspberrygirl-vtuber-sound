@@ -1,6 +1,8 @@
+from dataclasses import dataclass
 from typing import Protocol
 
-import sound.playback as playback
+from sound import playback
+from sound.rtp_playback import L16PlaybackFrame, StreamId
 
 
 class PlaybackState(Protocol):
@@ -18,11 +20,46 @@ class RtpPlaybackReceiver(Protocol):
 
     def cancel_stream(self, stream_id: str) -> None: ...
 
+    def close(self) -> None: ...
 
-def _receiver() -> RtpPlaybackReceiver:
+
+@dataclass
+class _RecordingPlaybackSink:
+    frames: list[L16PlaybackFrame]
+    closed_streams: list[str]
+    closed: bool = False
+
+    def write(self, frame: L16PlaybackFrame) -> None:
+        self.frames.append(frame)
+
+    def close_stream(self, stream_id: str) -> None:
+        self.closed_streams.append(stream_id)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FailingPlaybackSink:
+    def write(self, frame: L16PlaybackFrame) -> None:
+        raise _SinkWriteFailure
+
+    def close_stream(self, stream_id: str) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+class _SinkWriteFailure(RuntimeError):
+    pass
+
+
+def _receiver(playback_sink: _RecordingPlaybackSink | None = None) -> RtpPlaybackReceiver:
     receiver_type = getattr(playback, "RtpPlaybackReceiver", None)
     assert receiver_type is not None, "Sound RTP receiver/playback boundary is not implemented"
-    return receiver_type()
+    if playback_sink is None:
+        return receiver_type()
+    return receiver_type(playback_sink=playback_sink)
 
 
 def _announce_stream(receiver: RtpPlaybackReceiver, stream_id: str) -> None:
@@ -57,9 +94,49 @@ def test_rtp_receiver_advances_stream_relative_playback_state_for_announced_l16_
     assert [state.playback_position_samples for state in receiver.playback_states] == [2, 4]
 
 
+def test_rtp_receiver_delivers_accepted_l16_payload_unchanged_with_playback_state() -> None:
+    # Given: an active announced stream with an injectable L16 playback sink.
+    sink = _RecordingPlaybackSink(frames=[], closed_streams=[])
+    receiver = _receiver(sink)
+    _announce_stream(receiver, "stream-sound-delivery")
+    payload = b"\x00\x01\xff\xfe"
+
+    # When: the receiver accepts a valid V2/PT96 L16 RTP packet.
+    receiver.receive_packet(_l16_rtp_packet(960, payload))
+
+    # Then: the exact network-order bytes reach playback and existing state advances.
+    assert sink.frames == [
+        L16PlaybackFrame(
+            stream_id=StreamId("stream-sound-delivery"),
+            sample_rate=48_000,
+            channels=1,
+            payload=payload,
+        )
+    ]
+    assert receiver.playback_states[-1].playback_position_samples == 2
+
+
+def test_rtp_receiver_does_not_record_state_when_playback_sink_write_fails() -> None:
+    # Given: an active stream whose playback sink rejects its accepted payload.
+    receiver = playback.RtpPlaybackReceiver(playback_sink=_FailingPlaybackSink())
+    receiver.announce_stream(stream_id="stream-sound-failing-write", sample_rate=48_000, channels=1)
+
+    # When: the receiver delivers a valid L16 RTP packet.
+    try:
+        receiver.receive_packet(_l16_rtp_packet(960, b"\x00\x01"))
+    except _SinkWriteFailure:
+        pass
+    else:
+        raise AssertionError("expected sink write failure")
+
+    # Then: no unplayed packet advances observable playback state.
+    assert receiver.playback_states == []
+
+
 def test_rtp_receiver_rejects_invalid_or_unknown_packets_without_playback_state() -> None:
     # Given: a receiver with one announced stream and packets outside its L16 RTP contract.
-    receiver = _receiver()
+    sink = _RecordingPlaybackSink(frames=[], closed_streams=[])
+    receiver = _receiver(sink)
     _announce_stream(receiver, "stream-sound-002")
     unknown_stream_packet = _l16_rtp_packet(0, b"\x00\x01")
     bad_version_packet = _l16_rtp_packet(0, b"\x00\x01", version=1)
@@ -74,11 +151,13 @@ def test_rtp_receiver_rejects_invalid_or_unknown_packets_without_playback_state(
 
     # Then: malformed or unannounced media produces no playback state.
     assert receiver.playback_states == []
+    assert sink.frames == []
 
 
 def test_rtp_receiver_suppresses_cancelled_stream_packets_while_fresh_stream_remains_valid() -> None:
     # Given: an active stream that Orchestrator cancels before a new stream begins.
-    receiver = _receiver()
+    sink = _RecordingPlaybackSink(frames=[], closed_streams=[])
+    receiver = _receiver(sink)
     _announce_stream(receiver, "stream-sound-stale")
     receiver.receive_packet(_l16_rtp_packet(0, b"\x00\x01"), stream_id="stream-sound-stale")
     receiver.cancel_stream("stream-sound-stale")
@@ -94,3 +173,20 @@ def test_rtp_receiver_suppresses_cancelled_stream_packets_while_fresh_stream_rem
         "stream-sound-fresh",
     ]
     assert [state.playback_position_samples for state in receiver.playback_states] == [1, 1]
+    assert [frame.stream_id for frame in sink.frames] == [
+        StreamId("stream-sound-stale"),
+        StreamId("stream-sound-fresh"),
+    ]
+    assert sink.closed_streams == ["stream-sound-stale"]
+
+
+def test_rtp_receiver_closes_playback_sink_on_shutdown() -> None:
+    # Given: a receiver with a configured playback sink.
+    sink = _RecordingPlaybackSink(frames=[], closed_streams=[])
+    receiver = _receiver(sink)
+
+    # When: the Sound runtime shuts down.
+    receiver.close()
+
+    # Then: playback resources are deterministically closed.
+    assert sink.closed is True
