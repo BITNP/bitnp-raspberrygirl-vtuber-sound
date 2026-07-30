@@ -17,7 +17,7 @@ uv run sound-receive
 
 它绑定 UDP，向 Orchestrator 注册 `media.rtp.sink.register`，然后等待匹配的 `media.stream.command`。接受命令后，它报告 ready、queued 和 playing 状态。匹配的 `cancel` 会报告 cancelled 状态，并阻止该流之后的数据包。TLS、token、网络和真实验证要求请参阅[部署指南](deployment.zh-CN.md)。
 
-现场讲解链路中，将 `SOUND_SESSION_ID` 和 `SOUND_RTP_STREAM_ID` 设为与 Mic 相同的值，并将 `ORCHESTRATOR_WS_URL` 设为同一个 `/control` WSS 端点。应在 Orchestrator 后、Mic 前启动 Sound。Sound 保持 mode-agnostic，且没有直接 Mic 端点。
+现场语音交互链路中，将 `SOUND_SESSION_ID` 和 `SOUND_RTP_STREAM_ID` 设为与 Mic 相同的值，并将 `ORCHESTRATOR_WS_URL` 设为同一个 `/control` WSS 端点。应在 Orchestrator 后、Mic 前启动 Sound。Sound 保持不感知业务策略，且没有直接 Mic 端点。
 
 仅当 URL 是回环测试用的 `ws://` URL 且设置 `SOUND_ALLOW_LOOPBACK_WS=true` 时，才允许使用 `ws://`。生产环境绝不能使用此设置。
 

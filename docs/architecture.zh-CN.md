@@ -1,6 +1,6 @@
 # 架构
 
-Sound 只连接 Orchestrator。它不感知模式，因此系统模式不会改变此契约。生产路径有两条来自 Orchestrator 的链路：已认证的 WSS 控制链路和 UDP RTP 媒体链路。Sound 不提供也不使用对等服务端点。
+Sound 只连接 Orchestrator。它不感知业务策略，因此产品场景和 Orchestrator 交互选择不会改变此契约。生产路径有两条来自 Orchestrator 的链路：已认证的 WSS 控制链路和 UDP RTP 媒体链路。Sound 不提供也不使用对等服务端点。
 
 `sound-receive` 先绑定 `SOUND_RTP_BIND_HOST:SOUND_RTP_BIND_PORT`，再打开 `ORCHESTRATOR_WS_URL`，随后以 `SOUND_RTP_STREAM_ID` 注册 `SOUND_RTP_ADVERTISED_HOST` 和实际绑定端口。Orchestrator 通过 `media.stream.command` 命令已注册的 sink。命令必须指定配置的流 ID 和绑定端口，且必须使用 L16、16 kHz、单声道、负载类型 96、每帧 320 个采样及命令中的 SSRC。只有匹配活动命令的 RTP 才会送至 PortAudio。
 

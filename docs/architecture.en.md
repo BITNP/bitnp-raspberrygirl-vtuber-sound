@@ -1,6 +1,6 @@
 # Architecture
 
-Sound is an Orchestrator-only client. It is mode agnostic, so system modes don't change this contract. The production path has two routes from Orchestrator: authenticated WSS control and UDP RTP media. Sound doesn't expose or use a peer service endpoint.
+Sound is an Orchestrator-only client. It is strategy agnostic, so product scenarios and Orchestrator interaction choices do not change this contract. The production path has two routes from Orchestrator: authenticated WSS control and UDP RTP media. Sound doesn't expose or use a peer service endpoint.
 
 `sound-receive` first binds `SOUND_RTP_BIND_HOST:SOUND_RTP_BIND_PORT`, then opens `ORCHESTRATOR_WS_URL`, and registers `SOUND_RTP_ADVERTISED_HOST` plus the bound port as `SOUND_RTP_STREAM_ID`. Orchestrator commands the registered sink with `media.stream.command`. The command must name the configured stream and bound port, and must use L16, 16 kHz, mono, payload type 96, 320 samples per frame, and the command SSRC. Only RTP that matches the active command reaches PortAudio.
 

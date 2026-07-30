@@ -17,7 +17,7 @@ Sound 只有一个控制对端，即 Orchestrator。生产控制使用 WSS，媒
 
 `SOUND_RTP_BIND_PORT` 是期望的本地端口。`sound-receive` 会向 Orchestrator 注册实际绑定的端口，因此命令必须使用该注册端口和配置的流 ID。仅允许受信任的 Orchestrator 网络路径访问所选 UDP 端口。不得提交 bearer token、私钥或生成的证书。
 
-使用 `uv run sound-receive` 启动运行时。它在建立 WSS 连接前绑定 UDP，发送 `media.rtp.sink.register`，然后等待命令。有效命令必须使用 L16、16 kHz、单声道、负载类型 96、每帧 320 个采样、已注册端点及其 SSRC。Sound 没有现场模式设置，只接受来自 Orchestrator 中心的生成 RTP。
+使用 `uv run sound-receive` 启动运行时。它在建立 WSS 连接前绑定 UDP，发送 `media.rtp.sink.register`，然后等待命令。有效命令必须使用 L16、16 kHz、单声道、负载类型 96、每帧 320 个采样、已注册端点及其 SSRC。Sound 没有现场策略设置，只接受来自 Orchestrator 中心的生成 RTP。
 
 生产环境会拒绝 `ws://`。唯一例外是主机为 `127.0.0.1`、`localhost` 或 `::1` 的回环测试 URL，且必须设置 `SOUND_ALLOW_LOOPBACK_WS=true`。此开关仅供测试使用。部署时不要设置它，也不要用它绕过 WSS 或 TLS。
 

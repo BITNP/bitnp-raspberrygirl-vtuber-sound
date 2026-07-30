@@ -17,7 +17,7 @@ uv run sound-receive
 
 It binds UDP, registers `media.rtp.sink.register` with Orchestrator, and waits for a matching `media.stream.command`. On acceptance it reports ready, queued, and playing state. A matching `cancel` reports cancelled state and blocks later packets for that stream. See the [deployment guide](deployment.en.md) for TLS, token, network, and live verification requirements.
 
-For the onsite explainer loop, set `SOUND_SESSION_ID` and `SOUND_RTP_STREAM_ID` to the same values Mic uses, and set `ORCHESTRATOR_WS_URL` to the same `/control` WSS endpoint. Start Sound after Orchestrator and before Mic. Sound stays mode-agnostic and never has a direct Mic endpoint.
+For the onsite spoken-dialogue loop, set `SOUND_SESSION_ID` and `SOUND_RTP_STREAM_ID` to the same values Mic uses, and set `ORCHESTRATOR_WS_URL` to the same `/control` WSS endpoint. Start Sound after Orchestrator and before Mic. Sound stays strategy-agnostic and never has a direct Mic endpoint.
 
 `ws://` is only permitted for a loopback test URL when `SOUND_ALLOW_LOOPBACK_WS=true`. Never use that setting in production.
 

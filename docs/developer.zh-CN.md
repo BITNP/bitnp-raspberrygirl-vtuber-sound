@@ -1,6 +1,6 @@
 # Sound 开发者文档
 
-Sound 是 Orchestrator-only 的 RTP playback client。它不感知业务模式，不接受 Mic 直连，也不向 Frontend 或 Comments 暴露端点。
+Sound 是 Orchestrator-only 的 RTP playback client。它不感知业务策略，不接受 Mic 直连，也不向 Frontend 或 Comments 暴露端点。
 
 ## 技术栈
 
