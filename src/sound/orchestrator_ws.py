@@ -58,6 +58,7 @@ def encode_envelope(
     event_type: str,
     trace_id: str,
     session_id: str,
+    seq: int,
     data: Mapping[str, JsonValue],
     turn_id: str | None = None,
     segment_id: str | None = None,
@@ -70,7 +71,7 @@ def encode_envelope(
         "time": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "trace_id": trace_id,
         "session_id": session_id,
-        "seq": 0,
+        "seq": seq,
         "data": dict(data),
     }
     if turn_id is not None:

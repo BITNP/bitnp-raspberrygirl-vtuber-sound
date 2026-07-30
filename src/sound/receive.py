@@ -1,11 +1,12 @@
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Final, Protocol
+from typing import Final, Literal, Protocol, override
 
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosedOK
 
+from sound.notification_writer import NotificationWriter, OutboundNotification
 from sound.orchestrator_ws import (
     JsonValue,
     encode_envelope,
@@ -18,6 +19,7 @@ from sound.orchestrator_ws import (
 from sound.portaudio_playback import PortAudioPlaybackSink
 from sound.receive_config import SoundReceiveConfig, load_runtime_config
 from sound.rtp_playback import L16PlaybackSink, RtpPlaybackReceiver
+from sound.stream_flush import StreamFlush, StreamFlushAck, StreamFlushController
 
 _CODEC: Final[dict[str, JsonValue]] = {
     "format": "L16",
@@ -26,6 +28,16 @@ _CODEC: Final[dict[str, JsonValue]] = {
     "payload_type": 96,
     "samples_per_frame": 320,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class _ActiveCommand:
+    trace_id: str
+    session_id: str
+    seq: int
+    turn_id: str | None
+    segment_id: str | None
+    cancellation_epoch: int | None
 
 class UdpBinding(Protocol):
     @property
@@ -38,6 +50,12 @@ class UdpBinding(Protocol):
 
 class UdpBinder(Protocol):
     async def bind(self, host: str, port: int) -> UdpBinding: ...
+
+
+class _SocketAddressTransport(Protocol):
+    def get_extra_info(
+        self, name: Literal["sockname"], default: tuple[str, int]
+    ) -> tuple[str, int]: ...
 
 
 class ControlConnection(Protocol):
@@ -56,6 +74,7 @@ class _DatagramProtocol(asyncio.DatagramProtocol):
     def __init__(self) -> None:
         self.handler: Callable[[bytes], None] | None = None
 
+    @override
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         _ = addr
         if self.handler is not None:
@@ -86,16 +105,10 @@ class AsyncioUdpBinder:
             _DatagramProtocol,
             local_addr=(host, port),
         )
-        socket_address = transport.get_extra_info("sockname")
-        if not isinstance(socket_address, tuple) or len(socket_address) != 2:
-            raise RuntimeError("UDP endpoint did not expose its bound port")
-        bound_port = socket_address[1]
-        if not isinstance(bound_port, int):
-            raise TypeError("UDP endpoint exposed a non-integer port")
         return _AsyncioUdpBinding(
             transport=transport,
             protocol=protocol,
-            bound_port=bound_port,
+            bound_port=_bound_udp_port(transport),
         )
 
 
@@ -131,55 +144,99 @@ class ReceiveRuntime:
     async def run(self) -> None:
         binding = await self.udp_binder.bind(self.config.rtp_host, self.config.rtp_port)
         receiver = RtpPlaybackReceiver(playback_sink=self.playback_sink)
+        flushes = StreamFlushController(session_id=self.config.session_id, receiver=receiver)
         connection: ControlConnection | None = None
+        notification_writer: NotificationWriter | None = None
         active_stream_id: str | None = None
         active_cancel_target: str | None = None
-        active_event: Mapping[str, JsonValue] | None = None
+        active_command: _ActiveCommand | None = None
 
         def receive_packet(packet: bytes) -> None:
             state_count = len(receiver.playback_states)
             receiver.receive_packet(packet, stream_id=active_stream_id)
             if (
-                connection is not None
-                and active_event is not None
+                notification_writer is not None
+                and active_command is not None
                 and len(receiver.playback_states) > state_count
             ):
-                _ = asyncio.create_task(connection.send(self._state_envelope(active_event, "playing")))
+                notification_writer.enqueue(
+                    OutboundNotification(
+                        message=self._state_envelope(active_command, "playing"),
+                        stream_id=active_stream_id,
+                        is_playing=True,
+                    )
+                )
 
         binding.set_packet_handler(receive_packet)
         try:
             headers = _authorization_headers(self.config.trusted_lan_token)
             connection = await self.control_connector.connect(self.config.orchestrator_ws_url, headers)
-            await connection.send(self._register_envelope(binding.port))
-            while message := await connection.recv():
-                await asyncio.sleep(0)
-                event = parse_event(message)
-                event_type = required_str(event, "event_type")
-                match event_type:
-                    case "media.stream.command":
-                        active_stream_id = _announce_command(
-                            receiver=receiver,
-                            event=event,
-                            expected_stream_id=self.config.stream_id,
-                            expected_port=binding.port,
-                        )
-                        if active_stream_id is not None:
-                            active_event = event
-                            active_cancel_target = optional_str(event, "segment_id") or active_stream_id
-                            await connection.send(self._ready_envelope(event))
-                            await connection.send(self._state_envelope(event, "queued"))
-                    case "cancel":
-                        if (
-                            active_stream_id is not None
-                            and optional_str(event, "segment_id") == active_cancel_target
-                        ):
-                            receiver.cancel_stream(active_stream_id)
-                            await connection.send(self._state_envelope(event, "cancelled"))
-                            active_stream_id = None
-                            active_cancel_target = None
-                            active_event = None
-                    case _:
-                        continue
+            notification_writer = NotificationWriter(connection)
+            async with asyncio.TaskGroup() as task_group:
+                _ = task_group.create_task(notification_writer.run())
+                try:
+                    await notification_writer.send(
+                        OutboundNotification(message=self._register_envelope(binding.port))
+                    )
+                    while message := await connection.recv():
+                        event = parse_event(message)
+                        event_type = required_str(event, "event_type")
+                        match event_type:
+                            case "media.stream.command":
+                                active_stream_id = _announce_command(
+                                    receiver=receiver,
+                                    event=event,
+                                    expected_stream_id=self.config.stream_id,
+                                    expected_port=binding.port,
+                                )
+                                if active_stream_id is not None:
+                                    active_command = _active_command(event)
+                                    active_cancel_target = active_command.segment_id or active_stream_id
+                                    await notification_writer.send(
+                                        OutboundNotification(message=self._ready_envelope(event))
+                                    )
+                                    await notification_writer.send(
+                                        OutboundNotification(
+                                            message=self._state_envelope(active_command, "queued")
+                                        )
+                                    )
+                            case "cancel":
+                                if (
+                                    active_stream_id is not None
+                                    and optional_str(event, "segment_id") == active_cancel_target
+                                ):
+                                    receiver.cancel_stream(active_stream_id)
+                                    await notification_writer.invalidate_playing(active_stream_id)
+                                    if active_command is not None:
+                                        await notification_writer.send(
+                                            OutboundNotification(
+                                                message=self._state_envelope(
+                                                    active_command, "cancelled"
+                                                )
+                                            )
+                                        )
+                                    active_stream_id = None
+                                    active_cancel_target = None
+                                    active_command = None
+                            case "media.stream.flush":
+                                acknowledgement = flushes.apply(_flush(event))
+                                if acknowledgement is not None:
+                                    await notification_writer.invalidate_playing(
+                                        acknowledgement.stream_id
+                                    )
+                                    await notification_writer.send(
+                                        OutboundNotification(
+                                            message=self._flush_ack_envelope(event, acknowledgement)
+                                        )
+                                    )
+                                    if acknowledgement.stream_id == active_stream_id:
+                                        active_stream_id = None
+                                        active_cancel_target = None
+                                        active_command = None
+                            case _:
+                                continue
+                finally:
+                    notification_writer.close()
         except ConnectionClosedOK:
             return
         finally:
@@ -193,6 +250,7 @@ class ReceiveRuntime:
             event_type="media.rtp.sink.register",
             trace_id=self.config.trace_id,
             session_id=self.config.session_id,
+            seq=0,
             data={
                 "stream_id": self.config.stream_id,
                 "codec": _CODEC,
@@ -205,17 +263,40 @@ class ReceiveRuntime:
             event_type="media.rtp.sink.ready",
             trace_id=required_str(event, "trace_id"),
             session_id=required_str(event, "session_id"),
+            seq=required_int(event, "seq"),
             data={"stream_id": self.config.stream_id},
         )
 
-    def _state_envelope(self, event: Mapping[str, JsonValue], state: str) -> str:
+    def _state_envelope(self, command: _ActiveCommand, state: str) -> str:
+        data: dict[str, JsonValue] = {"stream_id": self.config.stream_id, "state": state}
+        if command.cancellation_epoch is not None:
+            data["cancellation_epoch"] = command.cancellation_epoch
         return encode_envelope(
             event_type="media.stream.state",
+            trace_id=command.trace_id,
+            session_id=command.session_id,
+            seq=command.seq,
+            turn_id=command.turn_id,
+            segment_id=command.segment_id,
+            data=data,
+        )
+
+    def _flush_ack_envelope(
+        self, event: Mapping[str, JsonValue], acknowledgement: StreamFlushAck
+    ) -> str:
+        return encode_envelope(
+            event_type="media.stream.flush.ack",
             trace_id=required_str(event, "trace_id"),
-            session_id=required_str(event, "session_id"),
-            turn_id=optional_str(event, "turn_id"),
-            segment_id=optional_str(event, "segment_id"),
-            data={"stream_id": self.config.stream_id, "state": state},
+            session_id=acknowledgement.session_id,
+            seq=required_int(event, "seq"),
+            turn_id=acknowledgement.turn_id,
+            segment_id=acknowledgement.segment_id,
+            data={
+                "stream_id": acknowledgement.stream_id,
+                "cancellation_epoch": acknowledgement.cancellation_epoch,
+                "request_id": acknowledgement.request_id,
+                "target_generated_ssrc": acknowledgement.target_generated_ssrc,
+            },
         )
 
 
@@ -223,6 +304,14 @@ def _authorization_headers(token: str | None) -> dict[str, str]:
     if token is None:
         return {}
     return {"authorization": f"Bearer {token}"}
+
+
+def _bound_udp_port(transport: _SocketAddressTransport) -> int:
+    socket_address = transport.get_extra_info("sockname", ("", -1))
+    bound_port = socket_address[1]
+    if bound_port < 0:
+        raise RuntimeError("UDP endpoint did not expose its bound port")
+    return bound_port
 
 
 def _announce_command(
@@ -246,6 +335,37 @@ def _announce_command(
         expected_ssrc=required_int(data, "ssrc"),
     )
     return stream_id
+
+
+def _flush(event: Mapping[str, JsonValue]) -> StreamFlush:
+    data = required_mapping(event, "data")
+    return StreamFlush(
+        session_id=required_str(event, "session_id"),
+        stream_id=required_str(data, "stream_id"),
+        turn_id=required_str(event, "turn_id"),
+        segment_id=required_str(event, "segment_id"),
+        cancellation_epoch=required_int(data, "cancellation_epoch"),
+        request_id=required_str(data, "request_id"),
+        target_generated_ssrc=required_int(data, "target_generated_ssrc"),
+    )
+
+
+def _active_command(event: Mapping[str, JsonValue]) -> _ActiveCommand:
+    data = required_mapping(event, "data")
+    return _ActiveCommand(
+        trace_id=required_str(event, "trace_id"),
+        session_id=required_str(event, "session_id"),
+        seq=required_int(event, "seq"),
+        turn_id=optional_str(event, "turn_id"),
+        segment_id=optional_str(event, "segment_id"),
+        cancellation_epoch=_optional_int(data, "cancellation_epoch"),
+    )
+
+
+def _optional_int(source: Mapping[str, JsonValue], field: str) -> int | None:
+    if field not in source:
+        return None
+    return required_int(source, field)
 
 
 def main() -> None:
