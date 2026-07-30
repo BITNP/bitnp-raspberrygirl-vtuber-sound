@@ -30,6 +30,10 @@ packages = ["src/sound"]
 [tool.pyright]
 venvPath = "."
 venv = ".venv"
+stubPath = "typings"
+reportAny = false
+reportUnknownArgumentType = false
+reportUnknownVariableType = false
 
 [tool.pytest.ini_options]
 minversion = "8.0"
