@@ -141,7 +141,7 @@ def test_receiver_does_not_advance_state_when_portaudio_write_fails() -> None:
         playback_sink=PortAudioPlaybackSink(device=None, stream_factory=factory)
     )
     receiver.announce_stream(stream_id="stream-failing-write", sample_rate=48_000, channels=1)
-    packet = bytes([0x80, 96, 0, 1]) + (0).to_bytes(4, "big") + (7).to_bytes(4, "big") + b"\x00\x01"
+    packet = bytes([0x80, 96, 0, 1]) + (0).to_bytes(4, "big") + (7).to_bytes(4, "big") + b"\x00\x01" + bytes(638)
 
     # When: a valid RTP packet reaches the failed device write boundary.
     with pytest.raises(_StreamWriteFailure):

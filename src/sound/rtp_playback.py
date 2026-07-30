@@ -9,6 +9,7 @@ PlaybackPositionSamples = NewType("PlaybackPositionSamples", int)
 _RTP_HEADER_BYTES: Final = 12
 _RTP_VERSION: Final = 2
 _L16_PAYLOAD_TYPE: Final = 96
+_L16_FRAME_BYTES: Final = 640
 
 
 class StreamStatus(Enum):
@@ -61,6 +62,7 @@ class RtpPlaybackReceiver:
 
     def __init__(self, *, playback_sink: L16PlaybackSink | None = None) -> None:
         self._streams: dict[StreamId, _AnnouncedStream] = {}
+        self._rejected_ssrcs: set[int] = set()
         self._playback_sink = playback_sink
         self.playback_states: list[RtpPlaybackState] = []
 
@@ -100,9 +102,20 @@ class RtpPlaybackReceiver:
         if self._playback_sink is not None:
             self._playback_sink.close_stream(stream_id)
 
+    def flush_stream(self, stream_id: str, target_generated_ssrc: int) -> bool:
+        """Clear current generated playback and permanently reject its announced SSRC."""
+        stream = self._streams.get(StreamId(stream_id))
+        if stream is None or stream.expected_ssrc != target_generated_ssrc:
+            return False
+        self._rejected_ssrcs.add(target_generated_ssrc)
+        self.cancel_stream(stream_id)
+        return True
+
     def receive_packet(self, packet: bytes, *, stream_id: str | None = None) -> None:
         parsed_packet = _parse_l16_rtp_packet(packet)
         if parsed_packet is None:
+            return
+        if parsed_packet.ssrc in self._rejected_ssrcs:
             return
         resolved_stream_id = self._resolve_stream_id(stream_id)
         if resolved_stream_id is None:
@@ -179,9 +192,9 @@ def _parse_l16_rtp_packet(packet: bytes) -> _L16RtpPacket | None:
         or has_padding
         or has_extension
         or csrc_count != 0
-        or payload_type != _L16_PAYLOAD_TYPE
-        or ssrc == 0
-        or len(payload) % 2 != 0
+            or payload_type != _L16_PAYLOAD_TYPE
+            or ssrc == 0
+            or len(payload) != _L16_FRAME_BYTES
     ):
         return None
     return _L16RtpPacket(

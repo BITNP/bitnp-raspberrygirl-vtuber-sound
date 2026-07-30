@@ -51,7 +51,7 @@ class _RecordingFactory:
 
 def test_sound_play_composes_default_portaudio_device_without_hardware() -> None:
     # Given: one RTP packet and no explicit playback-device selection.
-    payload = b"\x00\x01\xff\xfe"
+    payload = b"\x00\x01\xff\xfe" + bytes(636)
     packet = bytes([0x80, 96, 0, 1]) + (960).to_bytes(4, "big") + (7).to_bytes(4, "big") + payload
     environment = {
         "BITNP_SOUND_PLAY_STREAM_ID": "cli-stream",
@@ -68,7 +68,7 @@ def test_sound_play_composes_default_portaudio_device_without_hardware() -> None
     assert factory.stream.started is True
     assert factory.stream.stopped is True
     assert factory.stream.closed is True
-    assert receiver.playback_states[-1].playback_position_samples == 2
+    assert receiver.playback_states[-1].playback_position_samples == 320
 
 
 def test_playback_device_parser_maps_default_literal_to_portaudio_default() -> None:
@@ -84,7 +84,7 @@ def test_playback_device_parser_maps_default_literal_to_portaudio_default() -> N
 
 def test_sound_play_passes_numeric_and_named_playback_device_selections_to_portaudio() -> None:
     # Given: numeric and named neutral PortAudio device queries.
-    packet = bytes([0x80, 96, 0, 1]) + (0).to_bytes(4, "big") + (7).to_bytes(4, "big") + b"\x00\x01"
+    packet = bytes([0x80, 96, 0, 1]) + (0).to_bytes(4, "big") + (7).to_bytes(4, "big") + b"\x00\x01" + bytes(638)
 
     # When: the CLI composition runs with each selection.
     numeric_factory = _RecordingFactory()
