@@ -1,9 +1,3 @@
-"""模块契约说明.
-
-职责: 提供 sound.receive
-模块的领域模型、边界函数和运行时协作逻辑。
-契约: 模块只提供注释所描述的公开入口,不在文档更新中改变运行时行为。
-"""
 
 import asyncio
 from collections.abc import Callable, Mapping
@@ -39,13 +33,6 @@ _CODEC: Final[dict[str, JsonValue]] = {
 
 @dataclass(frozen=True, slots=True)
 class _ActiveCommand:
-    """类契约说明.
-
-    职责: 保存 _ActiveCommand
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段: trace_id、session_id、seq、turn
-    _id、segment_id、cancellation_epoch。
-    """
 
     trace_id: str
 
@@ -61,180 +48,67 @@ class _ActiveCommand:
 
 
 class UdpBinding(Protocol):
-    """类契约说明.
-
-    职责: 声明 UdpBinding 协议接口,约束实现方必须提供的行为。
-    契约: 方法:
-    port、set_packet_handler、close。
-    """
 
     @property
     def port(self) -> int:
-        """函数契约说明.
-
-        功能: 执行 port 的同步逻辑,并维持签名契约。
-        参数: self 表示当前实例。
-        契约: 同步调用。 返回 `int`。
-        """
 
         ...
 
     def set_packet_handler(self, handler: Callable[[bytes], None]) -> None:
-        """函数契约说明.
-
-        功能: 执行 set_packet_handler
-        的同步逻辑,并维持签名契约。
-        参数: self 表示当前实例。 handler:
-        Callable[[bytes], None]。 必填。
-        契约: 同步调用。 返回 `None`。
-        """
 
         ...
 
     def close(self) -> None:
-        """函数契约说明.
-
-        功能: 执行 close 的同步逻辑,并维持签名契约。
-        参数: self 表示当前实例。
-        契约: 同步调用。 返回 `None`。
-        """
 
         ...
 
 
 class UdpBinder(Protocol):
-    """类契约说明.
-
-    职责: 声明 UdpBinder 协议接口,约束实现方必须提供的行为。
-    契约: 方法: bind。
-    """
 
     async def bind(self, host: str, port: int) -> UdpBinding:
-        """函数契约说明.
-
-        功能: 执行 bind 的异步逻辑,并维持签名契约。
-        参数: self 表示当前实例。 host: str。 必填。
-        port: int。 必填。
-        契约: 异步调用。 返回 `UdpBinding`。
-        """
 
         ...
 
 
 class _SocketAddressTransport(Protocol):
-    """类契约说明.
-
-    职责: 声明 _SocketAddressTransport
-    协议接口,约束实现方必须提供的行为。
-    契约: 方法: get_extra_info。
-    """
 
     def get_extra_info(
         self, name: Literal["sockname"], default: tuple[str, int]
     ) -> tuple[str, int]:
-        """函数契约说明.
-
-        功能: 执行 get_extra_info
-        的同步逻辑,并维持签名契约。
-        参数: self 表示当前实例。 name:
-        Literal['sockname']。 必填。
-        default: tuple[str, int]。 必填。
-        契约: 同步调用。 返回 `tuple[str, int]`。
-        """
 
         ...
 
 
 class ControlConnection(Protocol):
-    """类契约说明.
-
-    职责: 声明 ControlConnection
-    协议接口,约束实现方必须提供的行为。
-    契约: 方法: send、recv、close。
-    """
 
     async def send(self, message: str) -> None:
-        """函数契约说明.
-
-        功能: 发送协议消息或媒体数据。
-        参数: self 表示当前实例。 message: str。
-        必填。
-        契约: 异步调用。 返回 `None`。
-        """
 
         ...
 
     async def recv(self) -> str | None:
-        """函数契约说明.
-
-        功能: 执行 recv 的异步逻辑,并维持签名契约。
-        参数: self 表示当前实例。
-        契约: 异步调用。 返回 `str | None`。
-        """
 
         ...
 
     async def close(self) -> None:
-        """函数契约说明.
-
-        功能: 执行 close 的异步逻辑,并维持签名契约。
-        参数: self 表示当前实例。
-        契约: 异步调用。 返回 `None`。
-        """
 
         ...
 
 
 class ControlConnector(Protocol):
-    """类契约说明.
-
-    职责: 声明 ControlConnector
-    协议接口,约束实现方必须提供的行为。
-    契约: 方法: connect。
-    """
 
     async def connect(self, url: str, headers: dict[str, str]) -> ControlConnection:
-        """函数契约说明.
-
-        功能: 执行 connect 的异步逻辑,并维持签名契约。
-        参数: self 表示当前实例。 url: str。 必填。
-        headers: dict[str, str]。 必填。
-        契约: 异步调用。 返回
-        `ControlConnection`。
-        """
 
         ...
 
 
 class _DatagramProtocol(asyncio.DatagramProtocol):
-    """类契约说明.
-
-    职责: 声明 _DatagramProtocol
-    协议接口,约束实现方必须提供的行为。
-    契约: 方法: __init__、datagram_received。
-    """
 
     def __init__(self) -> None:
-        """函数契约说明.
-
-        功能: 初始化 _DatagramProtocol
-        的字段并建立实例不变式。
-        参数: self 表示当前实例。
-        契约: 同步调用。 返回 `None`。
-        """
 
         self.handler: Callable[[bytes], None] | None = None
 
     @override
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-        """函数契约说明.
-
-        功能: 执行 datagram_received
-        的同步逻辑,并协调 handler。
-        参数: self 表示当前实例。 data: bytes。
-        必填。 addr: tuple[str, int]。 必填。
-        契约: 同步调用。 返回 `None`。
-        """
 
         _ = addr
 
@@ -244,14 +118,6 @@ class _DatagramProtocol(asyncio.DatagramProtocol):
 
 @dataclass(slots=True)
 class _AsyncioUdpBinding:
-    """类契约说明.
-
-    职责: 保存 _AsyncioUdpBinding
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段:
-    transport、protocol、bound_port。 方法:
-    port、set_packet_handler、close。
-    """
 
     transport: asyncio.DatagramTransport
 
@@ -261,59 +127,21 @@ class _AsyncioUdpBinding:
 
     @property
     def port(self) -> int:
-        """函数契约说明.
-
-        功能: 执行 port 的同步逻辑,并维持签名契约。
-        参数: self 表示当前实例。
-        契约: 同步调用。 返回 `int`。
-        """
 
         return self.bound_port
 
     def set_packet_handler(self, handler: Callable[[bytes], None]) -> None:
-        """函数契约说明.
-
-        功能: 执行 set_packet_handler
-        的同步逻辑,并产出 handler。
-        参数: self 表示当前实例。 handler:
-        Callable[[bytes], None]。 必填。
-        契约: 同步调用。 返回 `None`。
-        """
 
         self.protocol.handler = handler
 
     def close(self) -> None:
-        """函数契约说明.
-
-        功能: 执行 close 的同步逻辑,并协调 close。
-        参数: self 表示当前实例。
-        契约: 同步调用。 返回 `None`。
-        """
 
         self.transport.close()
 
 
 class AsyncioUdpBinder:
-    """类契约说明.
-
-    职责: 定义 AsyncioUdpBinder
-    的状态、行为和对外协作边界。
-    契约: 方法: bind。
-    """
 
     async def bind(self, host: str, port: int) -> UdpBinding:
-        """函数契约说明.
-
-        功能: 执行 bind 的异步逻辑,并协调
-        get_running_loop,
-        _AsyncioUdpBinding,
-        create_datagram_endpoint,
-        _bound_udp_port。
-        参数: self 表示当前实例。 host: str。 必填。
-        port: int。 必填。
-        契约: 异步调用。 可能等待 I/O 或协程结果。 返回
-        `UdpBinding`。
-        """
 
         loop = asyncio.get_running_loop()
 
@@ -330,24 +158,8 @@ class AsyncioUdpBinder:
 
 
 class WebsocketsControlConnector:
-    """类契约说明.
-
-    职责: 定义 WebsocketsControlConnector
-    的状态、行为和对外协作边界。
-    契约: 方法: connect。
-    """
 
     async def connect(self, url: str, headers: dict[str, str]) -> ControlConnection:
-        """函数契约说明.
-
-        功能: 执行 connect 的异步逻辑,并协调
-        _WebsocketsControlConnection,
-        connect。
-        参数: self 表示当前实例。 url: str。 必填。
-        headers: dict[str, str]。 必填。
-        契约: 异步调用。 可能等待 I/O 或协程结果。 返回
-        `ControlConnection`。
-        """
 
         return _WebsocketsControlConnection(
             await connect(url, additional_headers=headers)
@@ -356,37 +168,14 @@ class WebsocketsControlConnector:
 
 @dataclass(frozen=True, slots=True)
 class _WebsocketsControlConnection:
-    """类契约说明.
-
-    职责: 保存 _WebsocketsControlConnection
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段: connection。 方法:
-    send、recv、close。
-    """
 
     connection: ClientConnection
 
     async def send(self, message: str) -> None:
-        """函数契约说明.
-
-        功能: 发送协议消息或媒体数据。
-        参数: self 表示当前实例。 message: str。
-        必填。
-        契约: 异步调用。 可能等待 I/O 或协程结果。 返回
-        `None`。
-        """
 
         await self.connection.send(message)
 
     async def recv(self) -> str | None:
-        """函数契约说明.
-
-        功能: 执行 recv 的异步逻辑,并协调 recv,
-        isinstance, TypeError。
-        参数: self 表示当前实例。
-        契约: 异步调用。 可能等待 I/O 或协程结果。 返回
-        `str | None`。 可能抛出 TypeError。
-        """
 
         message = await self.connection.recv()
 
@@ -396,28 +185,12 @@ class _WebsocketsControlConnection:
         return message
 
     async def close(self) -> None:
-        """函数契约说明.
-
-        功能: 执行 close 的异步逻辑,并协调 close。
-        参数: self 表示当前实例。
-        契约: 异步调用。 可能等待 I/O 或协程结果。 返回
-        `None`。
-        """
 
         await self.connection.close()
 
 
 @dataclass(slots=True)
 class ReceiveRuntime:
-    """类契约说明.
-
-    职责: 保存 ReceiveRuntime
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段: config、udp_binder、control_co
-    nnector、playback_sink。 方法: run、_regi
-    ster_envelope、_ready_envelope、_state
-    _envelope、_flush_ack_envelope。
-    """
 
     config: SoundReceiveConfig
 
@@ -428,13 +201,6 @@ class ReceiveRuntime:
     playback_sink: L16PlaybackSink
 
     async def run(self) -> None:
-        """函数契约说明.
-
-        功能: 运行流程并协调其依赖步骤。
-        参数: self 表示当前实例。
-        契约: 异步调用。 可能等待 I/O 或协程结果。 返回
-        `None`。
-        """
 
         binding = await self.udp_binder.bind(self.config.rtp_host, self.config.rtp_port)
 
@@ -455,15 +221,6 @@ class ReceiveRuntime:
         active_command: _ActiveCommand | None = None
 
         def receive_packet(packet: bytes) -> None:
-            """函数契约说明.
-
-            功能: 执行 receive_packet
-            的同步逻辑,并协调 len,
-            receive_packet, enqueue,
-            OutboundNotification。
-            参数: packet: bytes。 必填。
-            契约: 同步调用。 返回 `None`。
-            """
 
             state_count = len(receiver.playback_states)
 
@@ -606,14 +363,6 @@ class ReceiveRuntime:
                 await connection.close()
 
     def _register_envelope(self, bound_port: int) -> str:
-        """函数契约说明.
-
-        功能: 执行 _register_envelope
-        的同步逻辑,并协调 encode_envelope。
-        参数: self 表示当前实例。 bound_port:
-        int。 必填。
-        契约: 同步调用。 返回 `str`。
-        """
 
         return encode_envelope(
             event_type="media.rtp.sink.register",
@@ -631,15 +380,6 @@ class ReceiveRuntime:
         )
 
     def _ready_envelope(self, event: Mapping[str, JsonValue]) -> str:
-        """函数契约说明.
-
-        功能: 执行 _ready_envelope 的同步逻辑,并协调
-        encode_envelope, required_str,
-        required_int。
-        参数: self 表示当前实例。 event:
-        Mapping[str, JsonValue]。 必填。
-        契约: 同步调用。 返回 `str`。
-        """
 
         return encode_envelope(
             event_type="media.rtp.sink.ready",
@@ -650,15 +390,6 @@ class ReceiveRuntime:
         )
 
     def _state_envelope(self, command: _ActiveCommand, state: str) -> str:
-        """函数契约说明.
-
-        功能: 执行 _state_envelope 的同步逻辑,并协调
-        encode_envelope。
-        参数: self 表示当前实例。 command:
-        _ActiveCommand。 必填。 state: str。
-        必填。
-        契约: 同步调用。 返回 `str`。
-        """
 
         data: dict[str, JsonValue] = {
             "stream_id": self.config.stream_id,
@@ -681,17 +412,6 @@ class ReceiveRuntime:
     def _flush_ack_envelope(
         self, event: Mapping[str, JsonValue], acknowledgement: StreamFlushAck
     ) -> str:
-        """函数契约说明.
-
-        功能: 执行 _flush_ack_envelope
-        的同步逻辑,并协调 encode_envelope,
-        required_str, required_int。
-        参数: self 表示当前实例。 event:
-        Mapping[str, JsonValue]。 必填。
-        acknowledgement: StreamFlushAck。
-        必填。
-        契约: 同步调用。 返回 `str`。
-        """
 
         return encode_envelope(
             event_type="media.stream.flush.ack",
@@ -710,13 +430,6 @@ class ReceiveRuntime:
 
 
 def _authorization_headers(token: str | None) -> dict[str, str]:
-    """函数契约说明.
-
-    功能: 执行 _authorization_headers
-    的同步逻辑,并维持签名契约。
-    参数: token: str | None。 必填。
-    契约: 同步调用。 返回 `dict[str, str]`。
-    """
 
     if token is None:
         return {}
@@ -725,15 +438,6 @@ def _authorization_headers(token: str | None) -> dict[str, str]:
 
 
 def _bound_udp_port(transport: _SocketAddressTransport) -> int:
-    """函数契约说明.
-
-    功能: 执行 _bound_udp_port 的同步逻辑,并协调
-    get_extra_info, RuntimeError。
-    参数: transport:
-    _SocketAddressTransport。 必填。
-    契约: 同步调用。 返回 `int`。 可能抛出
-    RuntimeError。
-    """
 
     socket_address = transport.get_extra_info("sockname", ("", -1))
 
@@ -752,17 +456,6 @@ def _announce_command(
     expected_stream_id: str,
     expected_port: int,
 ) -> str | None:
-    """函数契约说明.
-
-    功能: 执行 _announce_command 的同步逻辑,并协调
-    required_mapping, required_str,
-    announce_stream, required_int。
-    参数: receiver: RtpPlaybackReceiver。
-    必填。 event: Mapping[str, JsonValue]。
-    必填。 expected_stream_id: str。 必填。
-    expected_port: int。 必填。
-    契约: 同步调用。 返回 `str | None`。
-    """
 
     data = required_mapping(event, "data")
 
@@ -790,15 +483,6 @@ def _announce_command(
 
 
 def _flush(event: Mapping[str, JsonValue]) -> StreamFlush:
-    """函数契约说明.
-
-    功能: 执行 _flush 的同步逻辑,并协调
-    required_mapping, StreamFlush,
-    required_str, required_int。
-    参数: event: Mapping[str, JsonValue]。
-    必填。
-    契约: 同步调用。 返回 `StreamFlush`。
-    """
 
     data = required_mapping(event, "data")
 
@@ -814,15 +498,6 @@ def _flush(event: Mapping[str, JsonValue]) -> StreamFlush:
 
 
 def _active_command(event: Mapping[str, JsonValue]) -> _ActiveCommand:
-    """函数契约说明.
-
-    功能: 执行 _active_command 的同步逻辑,并协调
-    required_mapping, _ActiveCommand,
-    required_str, required_int。
-    参数: event: Mapping[str, JsonValue]。
-    必填。
-    契约: 同步调用。 返回 `_ActiveCommand`。
-    """
 
     data = required_mapping(event, "data")
 
@@ -837,14 +512,6 @@ def _active_command(event: Mapping[str, JsonValue]) -> _ActiveCommand:
 
 
 def _optional_int(source: Mapping[str, JsonValue], field: str) -> int | None:
-    """函数契约说明.
-
-    功能: 执行 _optional_int 的同步逻辑,并协调
-    required_int。
-    参数: source: Mapping[str, JsonValue]。
-    必填。 field: str。 必填。
-    契约: 同步调用。 返回 `int | None`。
-    """
 
     if field not in source:
         return None
@@ -853,12 +520,6 @@ def _optional_int(source: Mapping[str, JsonValue], field: str) -> int | None:
 
 
 def main() -> None:
-    """函数契约说明.
-
-    功能: 执行命令行或服务入口流程并返回进程级结果。
-    参数: 无显式业务参数。
-    契约: 同步调用。 返回 `None`。
-    """
 
     config = load_runtime_config()
 

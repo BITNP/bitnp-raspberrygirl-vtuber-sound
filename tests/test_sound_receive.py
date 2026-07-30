@@ -1,8 +1,3 @@
-"""模块契约说明.
-
-职责: 为测试场景提供断言、夹具和回归用例。
-契约: 模块只提供注释所描述的公开入口,不在文档更新中改变运行时行为。
-"""
 
 import asyncio
 import json
@@ -20,14 +15,6 @@ from sound.rtp_playback import L16PlaybackFrame
 
 @dataclass
 class _FakeUdpBinding:
-    """类契约说明.
-
-    职责: 保存 _FakeUdpBinding
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段: port、handler、close_calls。
-    方法:
-    set_packet_handler、deliver、close。
-    """
 
     port: int = 50_006
 
@@ -36,63 +23,28 @@ class _FakeUdpBinding:
     close_calls: int = 0
 
     def set_packet_handler(self, handler: Callable[[bytes], None]) -> None:
-        """函数契约说明.
-
-        功能: 执行 set_packet_handler
-        的同步逻辑,并产出 handler。
-        参数: self 表示当前实例。 handler:
-        Callable[[bytes], None]。 必填。
-        契约: 同步调用。 返回 `None`。
-        """
 
         self.handler = handler
 
     def deliver(self, packet: bytes) -> None:
-        """函数契约说明.
-
-        功能: 执行 deliver 的同步逻辑,并协调
-        handler。
-        参数: self 表示当前实例。 packet: bytes。
-        必填。
-        契约: 同步调用。 返回 `None`。
-        """
 
         assert self.handler is not None
 
         self.handler(packet)
 
     def close(self) -> None:
-        """函数契约说明.
-
-        功能: 执行 close 的同步逻辑,并维持签名契约。
-        参数: self 表示当前实例。
-        契约: 同步调用。 返回 `None`。
-        """
 
         self.close_calls += 1
 
 
 @dataclass
 class _FakeUdpBinder:
-    """类契约说明.
-
-    职责: 保存 _FakeUdpBinder
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段: binding、bound。 方法: bind。
-    """
 
     binding: _FakeUdpBinding
 
     bound: bool = False
 
     async def bind(self, host: str, port: int) -> _FakeUdpBinding:
-        """函数契约说明.
-
-        功能: 执行 bind 的异步逻辑,并产出 bound。
-        参数: self 表示当前实例。 host: str。 必填。
-        port: int。 必填。
-        契约: 异步调用。 返回 `_FakeUdpBinding`。
-        """
 
         assert (host, port) == ("0.0.0.0", 50_006)
 
@@ -103,14 +55,6 @@ class _FakeUdpBinder:
 
 @dataclass
 class _FakeControlConnection:
-    """类契约说明.
-
-    职责: 保存 _FakeControlConnection
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段:
-    messages、binding、received、closed。
-    方法: send、recv、close。
-    """
 
     messages: list[str]
 
@@ -121,24 +65,10 @@ class _FakeControlConnection:
     closed: int = 0
 
     async def send(self, message: str) -> None:
-        """函数契约说明.
-
-        功能: 发送协议消息或媒体数据。
-        参数: self 表示当前实例。 message: str。
-        必填。
-        契约: 异步调用。 返回 `None`。
-        """
 
         self.received.append(message)
 
     async def recv(self) -> str | None:
-        """函数契约说明.
-
-        功能: 执行 recv 的异步逻辑,并协调 pop,
-        deliver, _rtp_packet。
-        参数: self 表示当前实例。
-        契约: 异步调用。 返回 `str | None`。
-        """
 
         if not self.messages:
             return None
@@ -155,27 +85,12 @@ class _FakeControlConnection:
         return message
 
     async def close(self) -> None:
-        """函数契约说明.
-
-        功能: 执行 close 的异步逻辑,并维持签名契约。
-        参数: self 表示当前实例。
-        契约: 异步调用。 返回 `None`。
-        """
 
         self.closed += 1
 
 
 @dataclass
 class _DelayedPlayingControlConnection(_FakeControlConnection):
-    """类契约说明.
-
-    职责: 保存
-    _DelayedPlayingControlConnection
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段:
-    release_playing、barrier_sent。 方法:
-    send。
-    """
 
     release_playing: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -183,14 +98,6 @@ class _DelayedPlayingControlConnection(_FakeControlConnection):
 
     @override
     async def send(self, message: str) -> None:
-        """函数契约说明.
-
-        功能: 发送协议消息或媒体数据。
-        参数: self 表示当前实例。 message: str。
-        必填。
-        契约: 异步调用。 可能等待 I/O 或协程结果。 返回
-        `None`。
-        """
 
         envelope = parse_event(message)
 
@@ -213,14 +120,6 @@ class _DelayedPlayingControlConnection(_FakeControlConnection):
 
 @dataclass
 class _FakeControlConnector:
-    """类契约说明.
-
-    职责: 保存 _FakeControlConnector
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段:
-    connection、udp_binder、headers。 方法:
-    connect。
-    """
 
     connection: _FakeControlConnection
 
@@ -231,15 +130,6 @@ class _FakeControlConnector:
     async def connect(
         self, url: str, headers: dict[str, str]
     ) -> _FakeControlConnection:
-        """函数契约说明.
-
-        功能: 执行 connect 的异步逻辑,并产出
-        headers。
-        参数: self 表示当前实例。 url: str。 必填。
-        headers: dict[str, str]。 必填。
-        契约: 异步调用。 返回
-        `_FakeControlConnection`。
-        """
 
         assert self.udp_binder.bound is True
 
@@ -252,58 +142,25 @@ class _FakeControlConnector:
 
 @dataclass
 class _RecordingSink:
-    """类契约说明.
-
-    职责: 保存 _RecordingSink
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段: frames、closed。 方法:
-    write、close_stream、close。
-    """
 
     frames: list[L16PlaybackFrame] = field(default_factory=list)
 
     closed: int = 0
 
     def write(self, frame: L16PlaybackFrame) -> None:
-        """函数契约说明.
-
-        功能: 执行 write 的同步逻辑,并协调 append。
-        参数: self 表示当前实例。 frame:
-        L16PlaybackFrame。 必填。
-        契约: 同步调用。 返回 `None`。
-        """
 
         self.frames.append(frame)
 
     def close_stream(self, stream_id: str) -> None:
-        """函数契约说明.
-
-        功能: 执行 close_stream 的同步逻辑,并产出 _。
-        参数: self 表示当前实例。 stream_id: str。
-        必填。
-        契约: 同步调用。 返回 `None`。
-        """
 
         _ = stream_id
 
     def close(self) -> None:
-        """函数契约说明.
-
-        功能: 执行 close 的同步逻辑,并维持签名契约。
-        参数: self 表示当前实例。
-        契约: 同步调用。 返回 `None`。
-        """
 
         self.closed += 1
 
 
 def _command() -> str:
-    """函数契约说明.
-
-    功能: 执行 _command 的同步逻辑,并协调 dumps。
-    参数: 无显式业务参数。
-    契约: 同步调用。 返回 `str`。
-    """
 
     return json.dumps(
         {
@@ -337,12 +194,6 @@ def _command() -> str:
 
 
 def _cancel() -> str:
-    """函数契约说明.
-
-    功能: 执行 _cancel 的同步逻辑,并协调 dumps。
-    参数: 无显式业务参数。
-    契约: 同步调用。 返回 `str`。
-    """
 
     return json.dumps(
         {
@@ -361,12 +212,6 @@ def _cancel() -> str:
 
 
 def _flush() -> str:
-    """函数契约说明.
-
-    功能: 执行 _flush 的同步逻辑,并协调 dumps。
-    参数: 无显式业务参数。
-    契约: 同步调用。 返回 `str`。
-    """
 
     return json.dumps(
         {
@@ -391,14 +236,6 @@ def _flush() -> str:
 
 
 def _rtp_packet(*, timestamp: int, ssrc: int, payload: bytes) -> bytes:
-    """函数契约说明.
-
-    功能: 执行 _rtp_packet 的同步逻辑,并协调 bytes,
-    to_bytes, len。
-    参数: timestamp: int。 必填。 ssrc: int。
-    必填。 payload: bytes。 必填。
-    契约: 同步调用。 返回 `bytes`。
-    """
 
     return (
         bytes([0x80, 96, 0, 1])
@@ -410,14 +247,6 @@ def _rtp_packet(*, timestamp: int, ssrc: int, payload: bytes) -> bytes:
 
 
 def _state_values(messages: list[str]) -> list[str]:
-    """函数契约说明.
-
-    功能: 执行 _state_values 的同步逻辑,并协调
-    required_str, required_mapping,
-    parse_event。
-    参数: messages: list[str]。 必填。
-    契约: 同步调用。 返回 `list[str]`。
-    """
 
     return [
         required_str(required_mapping(event, "data"), "state")
@@ -430,14 +259,6 @@ def _state_values(messages: list[str]) -> list[str]:
 def test_runtime_config_requires_authenticated_wss_and_udp_endpoint() -> None:
     # Given: deployment configuration for Sound's sole Orchestrator control and RTP routes.
 
-    """函数契约说明.
-
-    功能: 验证 runtime config requires
-    authenticated wss and udp endpoint
-    的回归场景和可观察结果。
-    参数: 无显式业务参数。
-    契约: 同步调用。 返回 `None`。
-    """
 
     environment = {
         "ORCHESTRATOR_WS_URL": "wss://orchestrator.example.test/control",
@@ -470,14 +291,6 @@ async def test_receive_runtime_binds_registers_announces_delivers_cancels_and_cl
 ):
     # Given: an authenticated Sound sink with a canonical command, one packet, and cancellation.
 
-    """函数契约说明.
-
-    功能: 验证 receive runtime binds
-    registers announces delivers cancels
-    and closes once 的回归场景和可观察结果。
-    参数: 无显式业务参数。
-    契约: 异步调用。 可能等待 I/O 或协程结果。 返回 `None`。
-    """
 
     binding = _FakeUdpBinding()
 
@@ -571,14 +384,6 @@ async def test_receive_runtime_drops_queued_playing_after_cancel_before_writer_c
 ):
     # Given: an RTP callback whose playing notification cannot be consumed before cancellation.
 
-    """函数契约说明.
-
-    功能: 验证 receive runtime drops queued
-    playing after cancel before writer
-    consumes it 的回归场景和可观察结果。
-    参数: 无显式业务参数。
-    契约: 异步调用。 可能等待 I/O 或协程结果。 返回 `None`。
-    """
 
     binding = _FakeUdpBinding()
 
@@ -629,14 +434,6 @@ async def test_receive_runtime_drops_queued_playing_after_flush_ack_before_write
 ):
     # Given: an RTP callback whose playing notification remains queued through a valid flush.
 
-    """函数契约说明.
-
-    功能: 验证 receive runtime drops queued
-    playing after flush ack before
-    writer consumes it 的回归场景和可观察结果。
-    参数: 无显式业务参数。
-    契约: 异步调用。 可能等待 I/O 或协程结果。 返回 `None`。
-    """
 
     binding = _FakeUdpBinding()
 
@@ -694,14 +491,6 @@ async def test_receive_runtime_returns_correlated_flush_ack_for_announced_genera
 ):
     # Given: Sound has accepted one generated stream command before a correlated flush.
 
-    """函数契约说明.
-
-    功能: 验证 receive runtime returns
-    correlated flush ack for announced
-    generated ssrc 的回归场景和可观察结果。
-    参数: 无显式业务参数。
-    契约: 异步调用。 可能等待 I/O 或协程结果。 返回 `None`。
-    """
 
     binding = _FakeUdpBinding()
 

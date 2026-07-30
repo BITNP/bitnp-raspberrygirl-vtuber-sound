@@ -1,9 +1,3 @@
-"""模块契约说明.
-
-职责: 提供 sound.rtp_playback
-模块的领域模型、边界函数和运行时协作逻辑。
-契约: 模块只提供注释所描述的公开入口,不在文档更新中改变运行时行为。
-"""
 
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -26,11 +20,6 @@ _L16_FRAME_BYTES: Final = 640
 
 
 class StreamStatus(Enum):
-    """类契约说明.
-
-    职责: 定义 StreamStatus 的状态、行为和对外协作边界。
-    契约: 字段、不变式和资源归属由类体声明与类型标注共同约束。
-    """
 
     ACTIVE = "active"
 
@@ -39,13 +28,6 @@ class StreamStatus(Enum):
 
 @dataclass(frozen=True, slots=True)
 class RtpPlaybackState:
-    """类契约说明.
-
-    职责: 保存 RtpPlaybackState
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段: stream_id、rtp_timestamp、play
-    back_position_samples。
-    """
 
     stream_id: StreamId
 
@@ -56,13 +38,6 @@ class RtpPlaybackState:
 
 @dataclass(frozen=True, slots=True)
 class L16PlaybackFrame:
-    """类契约说明.
-
-    职责: 保存 L16PlaybackFrame
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段: stream_id、sample_rate、channe
-    ls、payload。
-    """
 
     stream_id: StreamId
 
@@ -74,57 +49,22 @@ class L16PlaybackFrame:
 
 
 class L16PlaybackSink(Protocol):
-    """类契约说明.
-
-    职责: 声明 L16PlaybackSink
-    协议接口,约束实现方必须提供的行为。
-    契约: 方法: write、close_stream、close。
-    """
 
     def write(self, frame: L16PlaybackFrame) -> None:
-        """函数契约说明.
-
-        功能: 执行 write 的同步逻辑,并维持签名契约。
-        参数: self 表示当前实例。 frame:
-        L16PlaybackFrame。 必填。
-        契约: 同步调用。 返回 `None`。
-        """
 
         ...
 
     def close_stream(self, stream_id: str) -> None:
-        """函数契约说明.
-
-        功能: 执行 close_stream
-        的同步逻辑,并维持签名契约。
-        参数: self 表示当前实例。 stream_id: str。
-        必填。
-        契约: 同步调用。 返回 `None`。
-        """
 
         ...
 
     def close(self) -> None:
-        """函数契约说明.
-
-        功能: 执行 close 的同步逻辑,并维持签名契约。
-        参数: self 表示当前实例。
-        契约: 同步调用。 返回 `None`。
-        """
 
         ...
 
 
 @dataclass(frozen=True, slots=True)
 class _AnnouncedStream:
-    """类契约说明.
-
-    职责: 保存 _AnnouncedStream
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段: sample_rate、channels、expecte
-    d_ssrc、status、playback_position_samp
-    les。
-    """
 
     sample_rate: int
 
@@ -139,13 +79,6 @@ class _AnnouncedStream:
 
 @dataclass(frozen=True, slots=True)
 class _L16RtpPacket:
-    """类契约说明.
-
-    职责: 保存 _L16RtpPacket
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段: timestamp、ssrc、l16_sample_co
-    unt、payload。
-    """
 
     timestamp: RtpTimestamp
 
@@ -157,24 +90,8 @@ class _L16RtpPacket:
 
 
 class RtpPlaybackReceiver:
-    """类契约说明.
-
-    职责: 定义 RtpPlaybackReceiver
-    的状态、行为和对外协作边界。
-    契约: 方法: __init__、announce_stream、can
-    cel_stream、flush_stream、receive_pack
-    et、close。
-    """
 
     def __init__(self, *, playback_sink: L16PlaybackSink | None = None) -> None:
-        """函数契约说明.
-
-        功能: 初始化 RtpPlaybackReceiver
-        的字段并建立实例不变式。
-        参数: self 表示当前实例。 playback_sink:
-        L16PlaybackSink | None。 可省略。
-        契约: 同步调用。 返回 `None`。
-        """
 
         self._streams: dict[StreamId, _AnnouncedStream] = {}
 
@@ -192,17 +109,6 @@ class RtpPlaybackReceiver:
         channels: int,
         expected_ssrc: int | None = None,
     ) -> None:
-        """函数契约说明.
-
-        功能: 执行 announce_stream 的同步逻辑,并协调
-        StreamId, get, _AnnouncedStream,
-        close_stream。
-        参数: self 表示当前实例。 stream_id: str。
-        必填。 sample_rate: int。 必填。
-        channels: int。 必填。
-        expected_ssrc: int | None。 可省略。
-        契约: 同步调用。 返回 `None`。
-        """
 
         if (
             stream_id == ""
@@ -228,15 +134,6 @@ class RtpPlaybackReceiver:
         )
 
     def cancel_stream(self, stream_id: str) -> None:
-        """函数契约说明.
-
-        功能: 执行 cancel_stream 的同步逻辑,并协调
-        StreamId, get, replace,
-        close_stream。
-        参数: self 表示当前实例。 stream_id: str。
-        必填。
-        契约: 同步调用。 返回 `None`。
-        """
 
         resolved_stream_id = StreamId(stream_id)
 
@@ -253,16 +150,6 @@ class RtpPlaybackReceiver:
             self._playback_sink.close_stream(stream_id)
 
     def flush_stream(self, stream_id: str, target_generated_ssrc: int) -> bool:
-        """函数契约说明.
-
-        功能: 执行 flush_stream 的同步逻辑,并协调
-        get, add, cancel_stream,
-        StreamId。
-        参数: self 表示当前实例。 stream_id: str。
-        必填。 target_generated_ssrc: int。
-        必填。
-        契约: 同步调用。 返回 `bool`。
-        """
 
         stream = self._streams.get(StreamId(stream_id))
 
@@ -276,16 +163,6 @@ class RtpPlaybackReceiver:
         return True
 
     def receive_packet(self, packet: bytes, *, stream_id: str | None = None) -> None:
-        """函数契约说明.
-
-        功能: 执行 receive_packet 的同步逻辑,并协调
-        _parse_l16_rtp_packet,
-        _resolve_stream_id, get,
-        replace。
-        参数: self 表示当前实例。 packet: bytes。
-        必填。 stream_id: str | None。 可省略。
-        契约: 同步调用。 返回 `None`。
-        """
 
         parsed_packet = _parse_l16_rtp_packet(packet)
 
@@ -349,25 +226,11 @@ class RtpPlaybackReceiver:
         )
 
     def close(self) -> None:
-        """函数契约说明.
-
-        功能: 执行 close 的同步逻辑,并协调 close。
-        参数: self 表示当前实例。
-        契约: 同步调用。 返回 `None`。
-        """
 
         if self._playback_sink is not None:
             self._playback_sink.close()
 
     def _resolve_stream_id(self, stream_id: str | None) -> StreamId | None:
-        """函数契约说明.
-
-        功能: 执行 _resolve_stream_id
-        的同步逻辑,并协调 StreamId, len, items。
-        参数: self 表示当前实例。 stream_id: str
-        | None。 必填。
-        契约: 同步调用。 返回 `StreamId | None`。
-        """
 
         if stream_id is not None:
             return StreamId(stream_id)
@@ -385,12 +248,6 @@ class RtpPlaybackReceiver:
 
 
 def _parse_l16_rtp_packet(packet: bytes) -> _L16RtpPacket | None:
-    """函数契约说明.
-
-    功能: 从边界输入解析类型化值。
-    参数: packet: bytes。 必填。
-    契约: 同步调用。 返回 `_L16RtpPacket | None`。
-    """
 
     if len(packet) < _RTP_HEADER_BYTES:
         return None

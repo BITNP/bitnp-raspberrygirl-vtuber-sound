@@ -1,8 +1,3 @@
-"""模块契约说明.
-
-职责: 为测试场景提供断言、夹具和回归用例。
-契约: 模块只提供注释所描述的公开入口,不在文档更新中改变运行时行为。
-"""
 
 from dataclasses import dataclass, field
 from typing import Literal
@@ -19,14 +14,6 @@ from sound.rtp_playback import L16PlaybackFrame, RtpPlaybackReceiver, StreamId
 
 @dataclass
 class _RecordingRawOutputStream:
-    """类契约说明.
-
-    职责: 保存 _RecordingRawOutputStream
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段: writes、started、aborted、stopp
-    ed、closed、fail_writes。 方法:
-    start、write、abort、stop、close。
-    """
 
     writes: list[bytes] = field(default_factory=list)
 
@@ -41,23 +28,10 @@ class _RecordingRawOutputStream:
     fail_writes: bool = False
 
     def start(self) -> None:
-        """函数契约说明.
-
-        功能: 执行 start 的同步逻辑,并产出 started。
-        参数: self 表示当前实例。
-        契约: 同步调用。 返回 `None`。
-        """
 
         self.started = True
 
     def write(self, data: bytes) -> bool:
-        """函数契约说明.
-
-        功能: 执行 write 的同步逻辑,并协调 append。
-        参数: self 表示当前实例。 data: bytes。
-        必填。
-        契约: 同步调用。 返回 `bool`。
-        """
 
         if self.fail_writes:
             raise _StreamWriteFailure
@@ -67,56 +41,25 @@ class _RecordingRawOutputStream:
         return False
 
     def abort(self) -> None:
-        """函数契约说明.
-
-        功能: 执行 abort 的同步逻辑,并产出 aborted。
-        参数: self 表示当前实例。
-        契约: 同步调用。 返回 `None`。
-        """
 
         self.aborted = True
 
     def stop(self) -> None:
-        """函数契约说明.
-
-        功能: 执行 stop 的同步逻辑,并产出 stopped。
-        参数: self 表示当前实例。
-        契约: 同步调用。 返回 `None`。
-        """
 
         self.stopped = True
 
     def close(self) -> None:
-        """函数契约说明.
-
-        功能: 执行 close 的同步逻辑,并产出 closed。
-        参数: self 表示当前实例。
-        契约: 同步调用。 返回 `None`。
-        """
 
         self.closed = True
 
 
 class _StreamWriteFailure(RuntimeError):
-    """类契约说明.
-
-    职责: 定义 _StreamWriteFailure
-    的状态、行为和对外协作边界。
-    契约: 字段、不变式和资源归属由类体声明与类型标注共同约束。
-    """
+    ...
 
 
 
 @dataclass
 class _RecordingRawOutputStreamFactory:
-    """类契约说明.
-
-    职责: 保存
-    _RecordingRawOutputStreamFactory
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段: configurations、streams、prepa
-    red_streams。 方法: open。
-    """
 
     configurations: list[tuple[PlaybackDevice, int, int, Literal["int16"]]] = field(
         default_factory=list
@@ -134,17 +77,6 @@ class _RecordingRawOutputStreamFactory:
         channels: int,
         dtype: Literal["int16"],
     ) -> _RecordingRawOutputStream:
-        """函数契约说明.
-
-        功能: 执行 open 的同步逻辑,并协调 append,
-        pop, _RecordingRawOutputStream。
-        参数: self 表示当前实例。 device:
-        PlaybackDevice。 必填。 samplerate:
-        int。 必填。 channels: int。 必填。
-        dtype: Literal['int16']。 必填。
-        契约: 同步调用。 返回
-        `_RecordingRawOutputStream`。
-        """
 
         stream = (
             self.prepared_streams.pop(0)
@@ -162,15 +94,6 @@ class _RecordingRawOutputStreamFactory:
 def _frame(
     stream_id: str = "stream-portaudio", *, sample_rate: int = 48_000, channels: int = 2
 ) -> L16PlaybackFrame:
-    """函数契约说明.
-
-    功能: 执行 _frame 的同步逻辑,并协调
-    L16PlaybackFrame, StreamId。
-    参数: stream_id: str。 可省略。
-    sample_rate: int。 可省略。 channels:
-    int。 可省略。
-    契约: 同步调用。 返回 `L16PlaybackFrame`。
-    """
 
     return L16PlaybackFrame(
         stream_id=StreamId(stream_id),
@@ -189,15 +112,6 @@ def test_l16_payload_converts_to_device_native_int16_for_each_byteorder(
 ) -> None:
     # Given: network-order positive and negative L16 samples.
 
-    """函数契约说明.
-
-    功能: 验证 l16 payload converts to
-    device native int16 for each
-    byteorder 的回归场景和可观察结果。
-    参数: byteorder: Literal['little',
-    'big']。 必填。 expected: bytes。 必填。
-    契约: 同步调用。 返回 `None`。
-    """
 
     payload = b"\x00\x01\xff\xfe"
 
@@ -213,14 +127,6 @@ def test_l16_payload_converts_to_device_native_int16_for_each_byteorder(
 def test_portaudio_sink_starts_one_typed_stream_per_stream_id() -> None:
     # Given: two announced streams with distinct output formats.
 
-    """函数契约说明.
-
-    功能: 验证 portaudio sink starts one
-    typed stream per stream id
-    的回归场景和可观察结果。
-    参数: 无显式业务参数。
-    契约: 同步调用。 返回 `None`。
-    """
 
     factory = _RecordingRawOutputStreamFactory()
 
@@ -251,14 +157,6 @@ def test_portaudio_sink_aborts_and_closes_cancelled_streams_but_stops_normal_str
 ):
     # Given: two active streams backed by distinct RawOutputStreams.
 
-    """函数契约说明.
-
-    功能: 验证 portaudio sink aborts and
-    closes cancelled streams but stops
-    normal streams 的回归场景和可观察结果。
-    参数: 无显式业务参数。
-    契约: 同步调用。 返回 `None`。
-    """
 
     factory = _RecordingRawOutputStreamFactory()
 
@@ -284,14 +182,6 @@ def test_portaudio_sink_aborts_and_closes_cancelled_streams_but_stops_normal_str
 def test_receiver_does_not_advance_state_when_portaudio_write_fails() -> None:
     # Given: a receiver whose started native output stream rejects its first write.
 
-    """函数契约说明.
-
-    功能: 验证 receiver does not advance
-    state when portaudio write fails
-    的回归场景和可观察结果。
-    参数: 无显式业务参数。
-    契约: 同步调用。 返回 `None`。
-    """
 
     failing_stream = _RecordingRawOutputStream(fail_writes=True)
 

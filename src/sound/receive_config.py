@@ -1,9 +1,3 @@
-"""模块契约说明.
-
-职责: 提供 sound.receive_config
-模块的领域模型、边界函数和运行时协作逻辑。
-契约: 模块只提供注释所描述的公开入口,不在文档更新中改变运行时行为。
-"""
 
 import os
 from collections.abc import Mapping
@@ -16,14 +10,6 @@ from sound.portaudio_playback import PlaybackDevice
 
 @dataclass(frozen=True, slots=True)
 class SoundReceiveConfig:
-    """类契约说明.
-
-    职责: 保存 SoundReceiveConfig
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段: orchestrator_ws_url、trusted_
-    lan_token、stream_id、rtp_host、rtp_por
-    t、advertised_rtp_host。
-    """
 
     orchestrator_ws_url: str
 
@@ -45,16 +31,6 @@ class SoundReceiveConfig:
 
 
 def load_runtime_config(env: Mapping[str, str] | None = None) -> SoundReceiveConfig:
-    """函数契约说明.
-
-    功能: 执行 load_runtime_config 的同步逻辑,并协调
-    load_config, urlparse,
-    SoundReceiveConfig, ConfigError。
-    参数: env: Mapping[str, str] | None。
-    可省略。
-    契约: 同步调用。 返回 `SoundReceiveConfig`。
-    可能抛出 ConfigError。
-    """
 
     source = os.environ if env is None else env
 
@@ -93,15 +69,6 @@ def load_runtime_config(env: Mapping[str, str] | None = None) -> SoundReceiveCon
 
 
 def _required_value(source: Mapping[str, str], key: str) -> str:
-    """函数契约说明.
-
-    功能: 执行 _required_value 的同步逻辑,并协调
-    strip, ConfigError, get。
-    参数: source: Mapping[str, str]。 必填。
-    key: str。 必填。
-    契约: 同步调用。 返回 `str`。 可能抛出
-    ConfigError。
-    """
 
     value = source.get(key, "").strip()
 
@@ -112,14 +79,6 @@ def _required_value(source: Mapping[str, str], key: str) -> str:
 
 
 def _port(raw_port: str | None) -> int:
-    """函数契约说明.
-
-    功能: 执行 _port 的同步逻辑,并协调 ConfigError,
-    int。
-    参数: raw_port: str | None。 必填。
-    契约: 同步调用。 返回 `int`。 可能抛出
-    ConfigError。
-    """
 
     if raw_port is None:
         raise ConfigError(key="SOUND_RTP_BIND_PORT", reason="must be set")
@@ -141,13 +100,6 @@ def _port(raw_port: str | None) -> int:
 
 
 def _playback_device(source: Mapping[str, str]) -> PlaybackDevice:
-    """函数契约说明.
-
-    功能: 执行 _playback_device 的同步逻辑,并协调
-    strip, isdecimal, int, get。
-    参数: source: Mapping[str, str]。 必填。
-    契约: 同步调用。 返回 `PlaybackDevice`。
-    """
 
     value = source.get("BITNP_PLAYBACK_DEVICE", "").strip()
 

@@ -1,9 +1,3 @@
-"""模块契约说明.
-
-职责: 提供 sound.orchestrator_ws
-模块的领域模型、边界函数和运行时协作逻辑。
-契约: 模块只提供注释所描述的公开入口,不在文档更新中改变运行时行为。
-"""
 
 import json
 from collections.abc import Mapping
@@ -16,13 +10,6 @@ type JsonValue = (
 
 
 def parse_event(message: str) -> Mapping[str, JsonValue]:
-    """函数契约说明.
-
-    功能: 从边界输入解析类型化值。
-    参数: message: str。 必填。
-    契约: 同步调用。 返回 `Mapping[str,
-    JsonValue]`。 可能抛出 TypeError。
-    """
 
     decoded = _json_value(json.loads(message))
 
@@ -33,12 +20,6 @@ def parse_event(message: str) -> Mapping[str, JsonValue]:
 
 
 def _json_value(value: object) -> JsonValue:
-    """函数契约说明.
-
-    功能: 从 JSON 解码结果递归收窄为模块内 JsonValue 类型。
-    参数: value: object。 必填。
-    契约: 同步调用。 返回 `JsonValue`。 可能抛出 TypeError。
-    """
 
     if value is None or isinstance(value, bool | int | float | str):
         return value
@@ -63,15 +44,6 @@ def _json_value(value: object) -> JsonValue:
 def required_mapping(
     source: Mapping[str, JsonValue], field: str
 ) -> Mapping[str, JsonValue]:
-    """函数契约说明.
-
-    功能: 执行 required_mapping 的同步逻辑,并协调
-    get, isinstance, TypeError。
-    参数: source: Mapping[str, JsonValue]。
-    必填。 field: str。 必填。
-    契约: 同步调用。 返回 `Mapping[str,
-    JsonValue]`。 可能抛出 TypeError。
-    """
 
     value = source.get(field)
 
@@ -82,14 +54,6 @@ def required_mapping(
 
 
 def required_str(source: Mapping[str, JsonValue], field: str) -> str:
-    """函数契约说明.
-
-    功能: 执行 required_str 的同步逻辑,并协调 get,
-    ValueError, isinstance。
-    参数: source: Mapping[str, JsonValue]。
-    必填。 field: str。 必填。
-    契约: 同步调用。 返回 `str`。 可能抛出 ValueError。
-    """
 
     value = source.get(field)
 
@@ -100,15 +64,6 @@ def required_str(source: Mapping[str, JsonValue], field: str) -> str:
 
 
 def optional_str(source: Mapping[str, JsonValue], field: str) -> str | None:
-    """函数契约说明.
-
-    功能: 执行 optional_str 的同步逻辑,并协调 get,
-    ValueError, isinstance。
-    参数: source: Mapping[str, JsonValue]。
-    必填。 field: str。 必填。
-    契约: 同步调用。 返回 `str | None`。 可能抛出
-    ValueError。
-    """
 
     value = source.get(field)
 
@@ -122,14 +77,6 @@ def optional_str(source: Mapping[str, JsonValue], field: str) -> str | None:
 
 
 def required_int(source: Mapping[str, JsonValue], field: str) -> int:
-    """函数契约说明.
-
-    功能: 执行 required_int 的同步逻辑,并协调 get,
-    isinstance, TypeError。
-    参数: source: Mapping[str, JsonValue]。
-    必填。 field: str。 必填。
-    契约: 同步调用。 返回 `int`。 可能抛出 TypeError。
-    """
 
     value = source.get(field)
 
@@ -149,17 +96,6 @@ def encode_envelope(
     turn_id: str | None = None,
     segment_id: str | None = None,
 ) -> str:
-    """函数契约说明.
-
-    功能: 执行 encode_envelope 的同步逻辑,并协调
-    dumps, str, replace, dict。
-    参数: event_type: str。 必填。 trace_id:
-    str。 必填。 session_id: str。 必填。 seq:
-    int。 必填。 data: Mapping[str,
-    JsonValue]。 必填。 turn_id: str | None。
-    可省略。 segment_id: str | None。 可省略。
-    契约: 同步调用。 返回 `str`。
-    """
 
     envelope: dict[str, JsonValue] = {
         "schema_version": "1.0.0",

@@ -1,9 +1,3 @@
-"""模块契约说明.
-
-职责: 提供 sound.config
-模块的领域模型、边界函数和运行时协作逻辑。
-契约: 模块只提供注释所描述的公开入口,不在文档更新中改变运行时行为。
-"""
 
 import os
 from collections.abc import Mapping
@@ -45,12 +39,6 @@ DEFAULT_HEALTH_PORT: Final = HealthPort(8050)
 
 @dataclass(frozen=True, slots=True)
 class ConfigError(Exception):
-    """类契约说明.
-
-    职责: 保存 ConfigError
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段: key、reason。 方法: __str__。
-    """
 
     key: str
 
@@ -58,25 +46,12 @@ class ConfigError(Exception):
 
     @override
     def __str__(self) -> str:
-        """函数契约说明.
-
-        功能: 生成面向日志、错误或调试输出的稳定文本表示。
-        参数: self 表示当前实例。
-        契约: 同步调用。 返回 `str`。
-        """
 
         return f"{self.key}: {self.reason}"
 
 
 @dataclass(frozen=True, slots=True)
 class ServiceConfig:
-    """类契约说明.
-
-    职责: 保存 ServiceConfig
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段: orchestrator_ws_url、health_h
-    ost、health_port、trusted_lan_token。
-    """
 
     orchestrator_ws_url: OrchestratorWsUrl
 
@@ -88,15 +63,6 @@ class ServiceConfig:
 
 
 def load_config(env: Mapping[str, str] | None = None) -> ServiceConfig:
-    """函数契约说明.
-
-    功能: 执行 load_config 的同步逻辑,并协调
-    _reject_peer_urls, strip,
-    ServiceConfig, get。
-    参数: env: Mapping[str, str] | None。
-    可省略。
-    契约: 同步调用。 返回 `ServiceConfig`。
-    """
 
     source = os.environ if env is None else env
 
@@ -115,14 +81,6 @@ def load_config(env: Mapping[str, str] | None = None) -> ServiceConfig:
 
 
 def _reject_peer_urls(env: Mapping[str, str]) -> None:
-    """函数契约说明.
-
-    功能: 执行 _reject_peer_urls 的同步逻辑,并协调
-    strip, ConfigError, get。
-    参数: env: Mapping[str, str]。 必填。
-    契约: 同步调用。 返回 `None`。 可能抛出
-    ConfigError。
-    """
 
     for key in PEER_WS_URL_KEYS:
         if env.get(key, "").strip():
@@ -132,13 +90,6 @@ def _reject_peer_urls(env: Mapping[str, str]) -> None:
 
 
 def _parse_orchestrator_ws_url(raw_url: str) -> OrchestratorWsUrl:
-    """函数契约说明.
-
-    功能: 从边界输入解析类型化值。
-    参数: raw_url: str。 必填。
-    契约: 同步调用。 返回 `OrchestratorWsUrl`。
-    可能抛出 ConfigError。
-    """
 
     parsed = urlparse(raw_url)
 
@@ -152,13 +103,6 @@ def _parse_orchestrator_ws_url(raw_url: str) -> OrchestratorWsUrl:
 
 
 def _parse_health_port(raw_port: str | None) -> HealthPort:
-    """函数契约说明.
-
-    功能: 从边界输入解析类型化值。
-    参数: raw_port: str | None。 必填。
-    契约: 同步调用。 返回 `HealthPort`。 可能抛出
-    ConfigError。
-    """
 
     if raw_port is None or raw_port.strip() == "":
         return DEFAULT_HEALTH_PORT
@@ -176,13 +120,6 @@ def _parse_health_port(raw_port: str | None) -> HealthPort:
 
 
 def _parse_trusted_lan_token(raw_token: str | None) -> TrustedLanToken | None:
-    """函数契约说明.
-
-    功能: 从边界输入解析类型化值。
-    参数: raw_token: str | None。 必填。
-    契约: 同步调用。 返回 `TrustedLanToken |
-    None`。
-    """
 
     if raw_token is None or raw_token.strip() == "":
         return None
