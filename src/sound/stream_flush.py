@@ -41,8 +41,7 @@ class StreamFlush:
     不可变数据结构,用类型标注表达字段契约。
     契约: 字段: session_id、stream_id、turn_id
     、segment_id、cancellation_epoch、reque
-    st_id。 方法:
-    with_target_generated_ssrc。
+    st_id。
     """
 
     session_id: str
@@ -58,28 +57,6 @@ class StreamFlush:
     request_id: str
 
     target_generated_ssrc: int
-
-    def with_target_generated_ssrc(self, target_generated_ssrc: int) -> StreamFlush:
-        """函数契约说明.
-
-        功能: 执行
-        with_target_generated_ssrc
-        的同步逻辑,并协调 StreamFlush。
-        参数: self 表示当前实例。
-        target_generated_ssrc: int。 必填。
-        契约: 同步调用。 返回 `StreamFlush`。
-        """
-
-        return StreamFlush(
-            session_id=self.session_id,
-            stream_id=self.stream_id,
-            turn_id=self.turn_id,
-            segment_id=self.segment_id,
-            cancellation_epoch=self.cancellation_epoch,
-            request_id=self.request_id,
-            target_generated_ssrc=target_generated_ssrc,
-        )
-
 
 @dataclass(frozen=True, slots=True)
 class StreamFlushAck:

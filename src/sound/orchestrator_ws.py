@@ -7,18 +7,8 @@
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
-
-from sound.config import OrchestratorWsUrl, ServiceConfig
-from sound.playback import (
-    PlaybackCancelCommand,
-    PlaybackCommand,
-    PlaybackService,
-    SoundEvent,
-    SoundEventSink,
-)
 
 type JsonValue = (
     None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
@@ -190,82 +180,3 @@ def encode_envelope(
         envelope["segment_id"] = segment_id
 
     return json.dumps(envelope, separators=(",", ":"))
-
-
-@dataclass(frozen=True, slots=True)
-class OrchestratorWebSocketBoundary:
-    """类契约说明.
-
-    职责: 保存 OrchestratorWebSocketBoundary
-    不可变数据结构,用类型标注表达字段契约。
-    契约: 字段: config。 方法: target_url、descr
-    ibe_placeholder、receive_play_command
-    、receive_cancel_command、send_sound_e
-    vent。
-    """
-
-    config: ServiceConfig
-
-    def target_url(self) -> OrchestratorWsUrl:
-        """函数契约说明.
-
-        功能: 执行 target_url 的同步逻辑,并维持签名契约。
-        参数: self 表示当前实例。
-        契约: 同步调用。 返回
-        `OrchestratorWsUrl`。
-        """
-
-        return self.config.orchestrator_ws_url
-
-    def describe_placeholder(self) -> str:
-        """函数契约说明.
-
-        功能: 执行 describe_placeholder
-        的同步逻辑,并维持签名契约。
-        参数: self 表示当前实例。
-        契约: 同步调用。 返回 `str`。
-        """
-
-        return "sound WebSocket boundary placeholder targets Orchestrator only"
-
-    def receive_play_command(
-        self, service: PlaybackService, command: PlaybackCommand
-    ) -> None:
-        """函数契约说明.
-
-        功能: 执行 receive_play_command
-        的同步逻辑,并协调 enqueue。
-        参数: self 表示当前实例。 service:
-        PlaybackService。 必填。 command:
-        PlaybackCommand。 必填。
-        契约: 同步调用。 返回 `None`。
-        """
-
-        service.enqueue(command)
-
-    def receive_cancel_command(
-        self, service: PlaybackService, command: PlaybackCancelCommand
-    ) -> None:
-        """函数契约说明.
-
-        功能: 执行 receive_cancel_command
-        的同步逻辑,并协调 cancel。
-        参数: self 表示当前实例。 service:
-        PlaybackService。 必填。 command:
-        PlaybackCancelCommand。 必填。
-        契约: 同步调用。 返回 `None`。
-        """
-
-        service.cancel(command)
-
-    def send_sound_event(self, sink: SoundEventSink, event: SoundEvent) -> None:
-        """函数契约说明.
-
-        功能: 发送协议消息或媒体数据。
-        参数: self 表示当前实例。 sink:
-        SoundEventSink。 必填。 event:
-        SoundEvent。 必填。
-        契约: 同步调用。 返回 `None`。
-        """
-
-        sink.receive_sound_event(event)

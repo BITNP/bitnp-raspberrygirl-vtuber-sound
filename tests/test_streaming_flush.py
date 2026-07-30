@@ -40,7 +40,11 @@ class _Receiver:
 
 
 def _flush(
-    *, session_id: str = "session-001", epoch: int = 3, request_id: str = "request-001"
+    *,
+    session_id: str = "session-001",
+    epoch: int = 3,
+    request_id: str = "request-001",
+    target_generated_ssrc: int = 305419896,
 ) -> StreamFlush:
     """函数契约说明.
 
@@ -57,7 +61,7 @@ def _flush(
         segment_id="segment-001",
         cancellation_epoch=epoch,
         request_id=request_id,
-        target_generated_ssrc=305419896,
+        target_generated_ssrc=target_generated_ssrc,
     )
 
 
@@ -121,7 +125,7 @@ def test_flush_rejects_stale_epoch_wrong_session_and_raw_mic_ssrc() -> None:
     )
 
     raw_mic = controller.apply(
-        _flush(request_id="request-004").with_target_generated_ssrc(0x0102_0304)
+        _flush(request_id="request-004", target_generated_ssrc=0x0102_0304)
     )
 
     # Then: only the generated epoch is accepted; unsafe or stale requests have no acknowledgement.
@@ -133,6 +137,33 @@ def test_flush_rejects_stale_epoch_wrong_session_and_raw_mic_ssrc() -> None:
     assert raw_mic is None
 
     assert receiver.flushed == [("stream-001", 305419896)]
+
+
+def test_flush_replays_exact_ack_and_rejects_older_epoch_without_resuming_playback() -> None:
+    # Given: a generated RTP stream has been accepted and then flushed at epoch four.
+    receiver = RtpPlaybackReceiver()
+    receiver.announce_stream(
+        stream_id="stream-001",
+        sample_rate=16_000,
+        channels=1,
+        expected_ssrc=0x1234_5678,
+    )
+    controller = StreamFlushController(session_id="session-001", receiver=receiver)
+    accepted = _flush(epoch=4, request_id="request-004", target_generated_ssrc=0x1234_5678)
+
+    # When: Sound receives an exact retry, an older epoch, and RTP for the flushed SSRC.
+    acknowledgement = controller.apply(accepted)
+    duplicate = controller.apply(accepted)
+    older = controller.apply(
+        _flush(epoch=3, request_id="request-003", target_generated_ssrc=0x1234_5678)
+    )
+    receiver.receive_packet(_rtp_packet(ssrc=0x1234_5678), stream_id="stream-001")
+
+    # Then: only the exact retry receives the prior acknowledgement and stale media stays blocked.
+    assert acknowledgement == StreamFlushAck.from_flush(accepted)
+    assert duplicate == acknowledgement
+    assert older is None
+    assert receiver.playback_states == []
 
 
 def test_flush_rejects_raw_mic_and_flushed_generated_rtp() -> None:
