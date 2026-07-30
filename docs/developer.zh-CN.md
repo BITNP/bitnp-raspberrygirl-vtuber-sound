@@ -1,6 +1,6 @@
 # Sound 开发者文档
 
-Sound 是 Orchestrator-only 的 RTP playback client。它不感知业务策略，不接受 Mic 直连，也不向 Frontend 或 Comments 暴露端点。
+Sound 是 Orchestrator-only 的 RTP playback client。它不感知业务策略，不接受 Mic 直连，也不向 Frontend 或 Comments 暴露端点。系统架构、部署编排和规范协议以 [Orchestrator 开发者文档](../../bitnp-raspberrygirl-vtuber-orchestrator/docs/developer.zh-CN.md) 为准；通过 `ORCHESTRATOR_REPO` 引用其 schema。
 
 ## 技术栈
 
@@ -17,7 +17,7 @@ Orchestrator UDP RTP ----/
 
 ## 通信协议
 
-Sound 引用 Orchestrator schema。媒体契约固定为 L16、16 kHz、mono、payload type 96、每帧 320 samples。`media.stream.flush` 和取消命令必须按 cancellation epoch 抑制 stale RTP，并返回匹配 ack 或状态。
+Sound 通过 `ORCHESTRATOR_REPO` 引用 Orchestrator 的 `schemas/protocol/envelope.schema.json` 和 `schemas/protocol/event-data.schema.json`，不复制 schema 或 fixture。媒体契约固定为 L16、16 kHz、mono、payload type 96、每帧 320 samples。`media.stream.flush` 和取消命令必须按 cancellation epoch 抑制 stale RTP，并返回匹配 ack 或状态。
 
 ## 模块契约
 
@@ -27,11 +27,4 @@ Sound 引用 Orchestrator schema。媒体契约固定为 L16、16 kHz、mono、p
 - 必须报告 ready、queued、playing、cancelled 等规范状态。
 - `sound-play` 只用于本地一包诊断。
 
-## 验证
-
-```bash
-uv sync --locked
-uv run pytest
-```
-
-真实部署验证应覆盖 sink 注册、命令匹配、RTP 播放、状态 envelope 和取消抑制。
+本地安装和测试见[用户文档](user.zh-CN.md)。真实部署验证应覆盖 sink 注册、命令匹配、RTP 播放、状态 envelope 和取消抑制。
