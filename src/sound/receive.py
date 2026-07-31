@@ -375,8 +375,11 @@ class ReceiveRuntime:
                                 data = required_mapping(event, "data")
                                 if (
                                     required_str(data, "stream_id") != active_stream_id
-                                    or required_int(data, "cancellation_epoch")
-                                    != active_command.cancellation_epoch
+                                    or (
+                                        active_command.cancellation_epoch is not None
+                                        and required_int(data, "cancellation_epoch")
+                                        != active_command.cancellation_epoch
+                                    )
                                 ):
                                     continue
                                 # The final RTP packet was paced before this WSS
@@ -386,10 +389,20 @@ class ReceiveRuntime:
                                 if receiver.finish_stream(
                                     active_stream_id, required_int(data, "ssrc")
                                 ):
+                                    completed_command = _ActiveCommand(
+                                        trace_id=active_command.trace_id,
+                                        session_id=active_command.session_id,
+                                        seq=active_command.seq,
+                                        turn_id=active_command.turn_id,
+                                        segment_id=active_command.segment_id,
+                                        cancellation_epoch=required_int(
+                                            data, "cancellation_epoch"
+                                        ),
+                                    )
                                     await notification_writer.send(
                                         OutboundNotification(
                                             message=self._state_envelope(
-                                                active_command, "finished"
+                                                completed_command, "finished"
                                             )
                                         )
                                     )
