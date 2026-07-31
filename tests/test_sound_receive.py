@@ -390,7 +390,7 @@ async def test_receive_runtime_binds_registers_announces_delivers_cancels_and_cl
         for envelope in envelopes[2:]
     ] == [("turn-001", "segment-001", 3)] * 2
 
-    assert [frame.payload for frame in sink.frames] == [b"\x00\x01" + bytes(638)]
+    assert sink.frames == []
 
     assert binding.close_calls == 1
 

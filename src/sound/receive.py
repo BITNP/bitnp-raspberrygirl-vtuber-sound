@@ -243,26 +243,28 @@ class ReceiveRuntime:
         active_command: _ActiveCommand | None = None
 
         playback_queue: asyncio.Queue[tuple[bytes, str | None]] = asyncio.Queue(
-            maxsize=64
+            maxsize=256
         )
 
-        playback_started = False
-
         def receive_packet(packet: bytes) -> None:
-            nonlocal playback_started
             # Datagram callbacks must stay bounded.  Playback is clocked below
             # so short scheduler/network bursts cannot underflow PortAudio.
-            if not playback_started:
-                playback_started = True
-                receiver.receive_packet(packet, stream_id=active_stream_id)
-                return
             if not playback_queue.full():
                 playback_queue.put_nowait((packet, active_stream_id))
 
         async def play_buffered_packets() -> None:
+            started = False
             while True:
                 packet, stream_id = await playback_queue.get()
                 try:
+                    if not started:
+                        # Keep three canonical 20 ms frames ahead of PortAudio.
+                        # Without this 60 ms reserve, one event-loop scheduling
+                        # delay is audible as the rapid hoarse discontinuity.
+                        await asyncio.sleep(
+                            _RTP_FRAME_SECONDS * _JITTER_BUFFER_FRAMES
+                        )
+                        started = True
                     state_count = len(receiver.playback_states)
                     receiver.receive_packet(packet, stream_id=stream_id)
                     if (
@@ -350,7 +352,9 @@ class ReceiveRuntime:
                                     and optional_str(event, "segment_id")
                                     == active_cancel_target
                                 ):
-                                    await playback_queue.join()
+                                    _discard_queued_stream(
+                                        playback_queue, active_stream_id
+                                    )
                                     receiver.cancel_stream(active_stream_id)
 
                                     await notification_writer.invalidate_playing(
@@ -447,7 +451,7 @@ class ReceiveRuntime:
 
                 finally:
                     notification_writer.close()
-                    playback_task.cancel()
+                    _ = playback_task.cancel()
 
         except ConnectionClosedOK:
             return
@@ -627,7 +631,7 @@ def _discard_queued_stream(
             retained.append(packet)
         queue.task_done()
     for packet in retained:
-        queue.put_nowait(packet)
+        _ = queue.put_nowait(packet)
 
 
 def main() -> None:

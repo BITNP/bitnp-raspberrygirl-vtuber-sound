@@ -65,8 +65,8 @@ class SounddeviceRawOutputStreamFactory:
             samplerate=samplerate,
             channels=channels,
             dtype=dtype,
-            blocksize=320,
-            latency="high",
+            blocksize=320,  # pyright: ignore[reportCallIssue]
+            latency="high",  # pyright: ignore[reportCallIssue]
         )
 
 

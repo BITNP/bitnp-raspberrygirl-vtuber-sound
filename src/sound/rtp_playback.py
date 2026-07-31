@@ -60,10 +60,6 @@ class L16PlaybackSink(Protocol):
 
         ...
 
-    def finish_stream(self, stream_id: str) -> None:
-
-        ...
-
     def close(self) -> None:
 
         ...
@@ -178,7 +174,11 @@ class RtpPlaybackReceiver:
             return False
         self._streams[StreamId(stream_id)] = replace(stream, status=StreamStatus.FINISHED)
         if self._playback_sink is not None:
-            self._playback_sink.finish_stream(stream_id)
+            finish_stream = getattr(self._playback_sink, "finish_stream", None)
+            if finish_stream is None:
+                self._playback_sink.close_stream(stream_id)
+            else:
+                finish_stream(stream_id)
         return True
 
     def receive_packet(self, packet: bytes, *, stream_id: str | None = None) -> None:
