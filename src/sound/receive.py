@@ -1,6 +1,6 @@
-
 import asyncio
 import logging
+import os
 import ssl
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -66,7 +66,7 @@ class _IngressTiming:
         self.dropped_packets += 1
 
     def log(self, *, stream_id: str) -> None:
-        _LOGGER.warning(
+        _LOGGER.debug(
             "rtp_ingress_diagnostic stream=%s packets=%d drops=%d late_gaps=%d "
             + "max_gap_ms=%.3f nominal_gap_ms=%.1f",
             stream_id,
@@ -77,6 +77,7 @@ class _IngressTiming:
             _RTP_NOMINAL_GAP_MS,
         )
 
+
 _JITTER_BUFFER_FRAMES: Final = 10
 
 _RTP_FRAME_SECONDS: Final = 0.020
@@ -84,7 +85,6 @@ _RTP_FRAME_SECONDS: Final = 0.020
 
 @dataclass(frozen=True, slots=True)
 class _ActiveCommand:
-
     trace_id: str
 
     session_id: str
@@ -99,66 +99,42 @@ class _ActiveCommand:
 
 
 class UdpBinding(Protocol):
-
     @property
-    def port(self) -> int:
+    def port(self) -> int: ...
 
-        ...
+    def set_packet_handler(self, handler: Callable[[bytes], None]) -> None: ...
 
-    def set_packet_handler(self, handler: Callable[[bytes], None]) -> None:
-
-        ...
-
-    def close(self) -> None:
-
-        ...
+    def close(self) -> None: ...
 
 
 class UdpBinder(Protocol):
-
-    async def bind(self, host: str, port: int) -> UdpBinding:
-
-        ...
+    async def bind(self, host: str, port: int) -> UdpBinding: ...
 
 
 class _SocketAddressTransport(Protocol):
-
     def get_extra_info(
         self, name: Literal["sockname"], default: tuple[str, int]
-    ) -> tuple[str, int]:
-
-        ...
+    ) -> tuple[str, int]: ...
 
 
 class ControlConnection(Protocol):
+    async def send(self, message: str) -> None: ...
 
-    async def send(self, message: str) -> None:
+    async def recv(self) -> str | None: ...
 
-        ...
-
-    async def recv(self) -> str | None:
-
-        ...
-
-    async def close(self) -> None:
-
-        ...
+    async def close(self) -> None: ...
 
 
 class ControlConnector(Protocol):
-
     async def connect(
         self,
         url: str,
         headers: dict[str, str],
         ssl_context: ssl.SSLContext | None,
-    ) -> ControlConnection:
-
-        ...
+    ) -> ControlConnection: ...
 
 
 class _DatagramProtocol(asyncio.DatagramProtocol):
-
     def __init__(self) -> None:
 
         self.handler: Callable[[bytes], None] | None = None
@@ -174,7 +150,6 @@ class _DatagramProtocol(asyncio.DatagramProtocol):
 
 @dataclass(slots=True)
 class _AsyncioUdpBinding:
-
     transport: asyncio.DatagramTransport
 
     protocol: _DatagramProtocol
@@ -196,7 +171,6 @@ class _AsyncioUdpBinding:
 
 
 class AsyncioUdpBinder:
-
     async def bind(self, host: str, port: int) -> UdpBinding:
 
         loop = asyncio.get_running_loop()
@@ -214,7 +188,6 @@ class AsyncioUdpBinder:
 
 
 class WebsocketsControlConnector:
-
     async def connect(
         self,
         url: str,
@@ -234,7 +207,6 @@ class WebsocketsControlConnector:
 
 @dataclass(frozen=True, slots=True)
 class _WebsocketsControlConnection:
-
     connection: ClientConnection
 
     async def send(self, message: str) -> None:
@@ -257,7 +229,6 @@ class _WebsocketsControlConnection:
 
 @dataclass(slots=True)
 class ReceiveRuntime:
-
     config: SoundReceiveConfig
 
     udp_binder: UdpBinder
@@ -311,9 +282,7 @@ class ReceiveRuntime:
                         # Keep ten canonical 20 ms frames ahead of PortAudio.
                         # Without this 200 ms reserve, one event-loop scheduling
                         # delay is audible as the rapid hoarse discontinuity.
-                        await asyncio.sleep(
-                            _RTP_FRAME_SECONDS * _JITTER_BUFFER_FRAMES
-                        )
+                        await asyncio.sleep(_RTP_FRAME_SECONDS * _JITTER_BUFFER_FRAMES)
                         started = True
                     # Do not use the asyncio task as a 20 ms media clock.  It
                     # can wake late under ordinary desktop load, turning one
@@ -436,7 +405,9 @@ class ReceiveRuntime:
                                 acknowledgement = flushes.apply(_flush(event))
 
                                 if acknowledgement is not None:
-                                    _discard_queued_stream(playback_queue, acknowledgement.stream_id)
+                                    _discard_queued_stream(
+                                        playback_queue, acknowledgement.stream_id
+                                    )
                                     await notification_writer.invalidate_playing(
                                         acknowledgement.stream_id
                                     )
@@ -460,13 +431,12 @@ class ReceiveRuntime:
                                 if active_stream_id is None or active_command is None:
                                     continue
                                 data = required_mapping(event, "data")
-                                if (
-                                    required_str(data, "stream_id") != active_stream_id
-                                    or (
-                                        active_command.cancellation_epoch is not None
-                                        and required_int(data, "cancellation_epoch")
-                                        != active_command.cancellation_epoch
-                                    )
+                                if required_str(
+                                    data, "stream_id"
+                                ) != active_stream_id or (
+                                    active_command.cancellation_epoch is not None
+                                    and required_int(data, "cancellation_epoch")
+                                    != active_command.cancellation_epoch
                                 ):
                                     continue
                                 # The final RTP packet was paced before this WSS
@@ -692,6 +662,13 @@ def _discard_queued_stream(
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=getattr(
+            logging, os.environ.get("BITNP_LOG_LEVEL", "INFO").upper(), logging.INFO
+        ),
+        format="%(asctime)s.%(msecs)03d %(levelname)s %(name)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
 
     config = load_runtime_config()
 
