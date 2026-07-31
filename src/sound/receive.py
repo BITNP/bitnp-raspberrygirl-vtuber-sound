@@ -33,7 +33,7 @@ _CODEC: Final[dict[str, JsonValue]] = {
     "samples_per_frame": 320,
 }
 
-_JITTER_BUFFER_FRAMES: Final = 3
+_JITTER_BUFFER_FRAMES: Final = 10
 
 _RTP_FRAME_SECONDS: Final = 0.020
 
@@ -258,8 +258,8 @@ class ReceiveRuntime:
                 packet, stream_id = await playback_queue.get()
                 try:
                     if not started:
-                        # Keep three canonical 20 ms frames ahead of PortAudio.
-                        # Without this 60 ms reserve, one event-loop scheduling
+                        # Keep ten canonical 20 ms frames ahead of PortAudio.
+                        # Without this 200 ms reserve, one event-loop scheduling
                         # delay is audible as the rapid hoarse discontinuity.
                         await asyncio.sleep(
                             _RTP_FRAME_SECONDS * _JITTER_BUFFER_FRAMES
