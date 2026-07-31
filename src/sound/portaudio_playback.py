@@ -147,7 +147,10 @@ class PortAudioPlaybackSink:
         stream = self._streams.pop(StreamId(stream_id), None)
         callback_stream = self._callback_streams.pop(StreamId(stream_id), None)
         if callback_stream is not None:
-            callback_stream.stop()
+            # RTP reception may finish far ahead of device consumption.  Unlike
+            # the blocking writer, a callback stream still owns queued PCM here;
+            # request an orderly drain instead of cutting its whole tail off.
+            callback_stream.finish()
             return
 
         if stream is not None:
@@ -192,6 +195,8 @@ class _CallbackPlayback:
         self._read_offset = 0
         self._write_offset = 0
         self._available = 0
+        self._channels = channels
+        self._finishing = False
         self._stream = sounddevice.RawOutputStream(
             device=device, samplerate=sample_rate, channels=channels, dtype="int16",
             blocksize=320,  # pyright: ignore[reportCallIssue]
@@ -220,6 +225,10 @@ class _CallbackPlayback:
     def abort(self) -> None:
         self._stream.abort(); self._stream.close()
 
+    def finish(self) -> None:
+        with self._lock:
+            self._finishing = True
+
     def stop(self) -> None:
         self._stream.stop(); self._stream.close()
 
@@ -227,7 +236,7 @@ class _CallbackPlayback:
         self, outdata: memoryview, frames: int, time_info: object, status: object
     ) -> None:
         _ = (time_info, status)
-        needed = frames * 2
+        needed = frames * 2 * self._channels
         output = memoryview(outdata).cast("B")
         if needed > self._capacity:
             raise RuntimeError("PortAudio callback block exceeds playback buffer")
@@ -240,8 +249,14 @@ class _CallbackPlayback:
                 output[first:copied] = self._buffer[:remaining]
             self._read_offset = (self._read_offset + copied) % self._capacity
             self._available -= copied
+            # Stop on the callback *after* the final PCM block.  Requesting
+            # CallbackStop in the block that consumes the tail is permitted by
+            # PortAudio but can discard that very block on some backends.
+            stop_after_silence = self._finishing and copied == 0 and self._available == 0
         if copied < needed:
             output[copied:needed] = self._silence[: needed - copied]
+        if stop_after_silence:
+            raise sounddevice.CallbackStop  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
 
 
 def l16_payload_to_native_int16(payload: bytes, *, byteorder: NativeByteOrder) -> bytes:

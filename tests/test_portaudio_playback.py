@@ -1,5 +1,8 @@
 
+# pyright: reportPrivateUsage=false
+
 from dataclasses import dataclass, field
+from threading import Lock
 from typing import Literal
 
 import pytest
@@ -7,6 +10,7 @@ import pytest
 from sound.portaudio_playback import (
     PlaybackDevice,
     PortAudioPlaybackSink,
+    _CallbackPlayback,
     l16_payload_to_native_int16,
 )
 from sound.rtp_playback import L16PlaybackFrame, RtpPlaybackReceiver, StreamId
@@ -211,3 +215,107 @@ def test_receiver_does_not_advance_state_when_portaudio_write_fails() -> None:
     # Then: output failure leaves observable receiver progress unchanged.
 
     assert receiver.playback_states == []
+
+
+def _callback_playback_for_test(*, capacity: int = 12) -> _CallbackPlayback:
+    # The actual constructor opens a hardware stream.  Build only its already
+    # allocated PCM queue so these tests can exercise the realtime callback
+    # algorithm without requiring a PortAudio device.
+    playback = object.__new__(_CallbackPlayback)
+    playback._lock = Lock()
+    playback._capacity = capacity
+    playback._buffer = bytearray(capacity)
+    playback._silence = bytes(capacity)
+    playback._read_offset = 0
+    playback._write_offset = 0
+    playback._available = 0
+    playback._channels = 1
+    playback._finishing = False
+    return playback
+
+
+def test_callback_playback_preserves_queue_order_across_ring_boundary() -> None:
+    # Given: a small preallocated ring whose read/write position will wrap.
+
+
+    playback = _callback_playback_for_test()
+    playback.push(b"abcdefgh")
+    first = memoryview(bytearray(6))
+    playback._callback(first, 3, None, None)
+    playback.push(b"ijklmnop")
+
+    # When: PortAudio asks for the remaining queued bytes.
+
+
+    second = memoryview(bytearray(10))
+    playback._callback(second, 5, None, None)
+
+    # Then: it receives continuous PCM in FIFO order, not a wrapped glitch.
+
+
+    assert bytes(first) == b"abcdef"
+    assert bytes(second) == b"ghijklmnop"
+
+
+def test_callback_playback_fills_only_an_underrun_tail_with_silence() -> None:
+    # Given: less PCM than the hardware callback requests.
+
+
+    playback = _callback_playback_for_test()
+    playback.push(b"\x01\x02\x03\x04")
+    output = memoryview(bytearray(8))
+
+    # When: the callback consumes the queue.
+
+
+    playback._callback(output, 4, None, None)
+
+    # Then: available audio is preserved and only the missing tail is silent.
+
+
+    assert bytes(output) == b"\x01\x02\x03\x04\x00\x00\x00\x00"
+
+
+def test_callback_playback_rejects_queue_overflow_without_overwriting_pcm() -> None:
+    # Given: a full bounded realtime queue.
+
+
+    playback = _callback_playback_for_test(capacity=4)
+    playback.push(b"abcd")
+
+    # When: a producer attempts to overwrite queued audio.
+
+
+    with pytest.raises(BufferError, match="buffer overflow"):
+        playback.push(b"ef")
+
+    # Then: the original audio is still exactly what PortAudio receives.
+
+
+    output = memoryview(bytearray(4))
+    playback._callback(output, 2, None, None)
+    assert bytes(output) == b"abcd"
+
+
+def test_callback_playback_drain_does_not_stop_the_final_pcm_block() -> None:
+    # Given: a completed stream with exactly one hardware block left to play.
+
+
+    playback = _callback_playback_for_test(capacity=8)
+    playback.push(b"abcd")
+    playback.finish()
+
+    # When: the final PCM block is consumed, it remains audible.
+
+
+    final_pcm = memoryview(bytearray(4))
+    playback._callback(final_pcm, 2, None, None)
+
+    # Then: stop is deferred to the following silent callback, avoiding a
+    # truncated final syllable.
+
+
+    assert bytes(final_pcm) == b"abcd"
+    with pytest.raises(Exception) as error:
+        playback._callback(memoryview(bytearray(4)), 2, None, None)
+    assert type(error.value).__name__ == "CallbackStop"
