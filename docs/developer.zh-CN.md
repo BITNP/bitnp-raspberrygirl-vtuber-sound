@@ -26,5 +26,6 @@ Sound 通过 `ORCHESTRATOR_REPO` 引用 Orchestrator 的 `schemas/protocol/envel
 - 必须只播放匹配 command 的流。
 - 必须报告 ready、queued、playing、cancelled 等规范状态。
 - `sound-play` 只用于本地一包诊断。
+- 生产部署在 `ORCHESTRATOR_TLS_CA_PATH` 设置同一个只读 PEM CA bundle，用于校验 Orchestrator WSS 证书。该路径也由 Orchestrator、Mic、Comments 使用；主机系统信任库只是已安装相同 CA 时的可选替代。
 
 本地安装和测试见[用户文档](user.zh-CN.md)。真实部署验证应覆盖 sink 注册、命令匹配、RTP 播放、状态 envelope 和取消抑制。
