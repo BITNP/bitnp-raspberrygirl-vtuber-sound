@@ -33,6 +33,10 @@ _CODEC: Final[dict[str, JsonValue]] = {
     "samples_per_frame": 320,
 }
 
+_JITTER_BUFFER_FRAMES: Final = 3
+
+_RTP_FRAME_SECONDS: Final = 0.020
+
 
 @dataclass(frozen=True, slots=True)
 class _ActiveCommand:
@@ -238,24 +242,44 @@ class ReceiveRuntime:
 
         active_command: _ActiveCommand | None = None
 
+        playback_queue: asyncio.Queue[tuple[bytes, str | None]] = asyncio.Queue(
+            maxsize=64
+        )
+
+        playback_started = False
+
         def receive_packet(packet: bytes) -> None:
+            nonlocal playback_started
+            # Datagram callbacks must stay bounded.  Playback is clocked below
+            # so short scheduler/network bursts cannot underflow PortAudio.
+            if not playback_started:
+                playback_started = True
+                receiver.receive_packet(packet, stream_id=active_stream_id)
+                return
+            if not playback_queue.full():
+                playback_queue.put_nowait((packet, active_stream_id))
 
-            state_count = len(receiver.playback_states)
-
-            receiver.receive_packet(packet, stream_id=active_stream_id)
-
-            if (
-                notification_writer is not None
-                and active_command is not None
-                and len(receiver.playback_states) > state_count
-            ):
-                notification_writer.enqueue(
-                    OutboundNotification(
-                        message=self._state_envelope(active_command, "playing"),
-                        stream_id=active_stream_id,
-                        is_playing=True,
-                    )
-                )
+        async def play_buffered_packets() -> None:
+            while True:
+                packet, stream_id = await playback_queue.get()
+                try:
+                    state_count = len(receiver.playback_states)
+                    receiver.receive_packet(packet, stream_id=stream_id)
+                    if (
+                        notification_writer is not None
+                        and active_command is not None
+                        and len(receiver.playback_states) > state_count
+                    ):
+                        notification_writer.enqueue(
+                            OutboundNotification(
+                                message=self._state_envelope(active_command, "playing"),
+                                stream_id=stream_id,
+                                is_playing=True,
+                            )
+                        )
+                    await asyncio.sleep(_RTP_FRAME_SECONDS)
+                finally:
+                    playback_queue.task_done()
 
         binding.set_packet_handler(receive_packet)
 
@@ -276,6 +300,7 @@ class ReceiveRuntime:
 
             async with asyncio.TaskGroup() as task_group:
                 _ = task_group.create_task(notification_writer.run())
+                playback_task = task_group.create_task(play_buffered_packets())
 
                 try:
                     await notification_writer.send(
@@ -325,6 +350,7 @@ class ReceiveRuntime:
                                     and optional_str(event, "segment_id")
                                     == active_cancel_target
                                 ):
+                                    await playback_queue.join()
                                     receiver.cancel_stream(active_stream_id)
 
                                     await notification_writer.invalidate_playing(
@@ -350,6 +376,7 @@ class ReceiveRuntime:
                                 acknowledgement = flushes.apply(_flush(event))
 
                                 if acknowledgement is not None:
+                                    _discard_queued_stream(playback_queue, acknowledgement.stream_id)
                                     await notification_writer.invalidate_playing(
                                         acknowledgement.stream_id
                                     )
@@ -411,10 +438,16 @@ class ReceiveRuntime:
                                     active_command = None
 
                             case _:
-                                continue
+                                pass
+
+                        # Let the clocked playback task consume an already
+                        # buffered RTP frame before processing the next control
+                        # frame (notably a cancellation in test or shutdown).
+                        await asyncio.sleep(0.001)
 
                 finally:
                     notification_writer.close()
+                    playback_task.cancel()
 
         except ConnectionClosedOK:
             return
@@ -582,6 +615,19 @@ def _optional_int(source: Mapping[str, JsonValue], field: str) -> int | None:
         return None
 
     return required_int(source, field)
+
+
+def _discard_queued_stream(
+    queue: asyncio.Queue[tuple[bytes, str | None]], stream_id: str
+) -> None:
+    retained: list[tuple[bytes, str | None]] = []
+    while not queue.empty():
+        packet = queue.get_nowait()
+        if packet[1] != stream_id:
+            retained.append(packet)
+        queue.task_done()
+    for packet in retained:
+        queue.put_nowait(packet)
 
 
 def main() -> None:
