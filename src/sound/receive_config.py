@@ -2,6 +2,7 @@
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlparse
 
 from sound.config import ConfigError, load_config
@@ -28,6 +29,8 @@ class SoundReceiveConfig:
     session_id: str = "sound-receive"
 
     playback_device: PlaybackDevice = None
+
+    tls_ca_path: Path | None = None
 
 
 def load_runtime_config(env: Mapping[str, str] | None = None) -> SoundReceiveConfig:
@@ -65,6 +68,7 @@ def load_runtime_config(env: Mapping[str, str] | None = None) -> SoundReceiveCon
         trace_id=source.get("SOUND_TRACE_ID", "sound-receive").strip(),
         session_id=source.get("SOUND_SESSION_ID", "sound-receive").strip(),
         playback_device=_playback_device(source),
+        tls_ca_path=service_config.tls_ca_path,
     )
 
 

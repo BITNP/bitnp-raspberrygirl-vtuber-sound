@@ -1,14 +1,16 @@
 
 import asyncio
 import json
+import ssl
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import override
 
 import pytest
 
 from sound.orchestrator_ws import parse_event, required_mapping, required_str
-from sound.receive import ReceiveRuntime
+from sound.receive import ReceiveRuntime, WebsocketsControlConnector
 from sound.receive_config import SoundReceiveConfig, load_runtime_config
 from sound.rtp_playback import L16PlaybackFrame
 
@@ -127,8 +129,13 @@ class _FakeControlConnector:
 
     headers: dict[str, str] | None = None
 
+    ssl_context: ssl.SSLContext | None = None
+
     async def connect(
-        self, url: str, headers: dict[str, str]
+        self,
+        url: str,
+        headers: dict[str, str],
+        ssl_context: ssl.SSLContext | None,
     ) -> _FakeControlConnection:
 
         assert self.udp_binder.bound is True
@@ -137,7 +144,17 @@ class _FakeControlConnector:
 
         self.headers = headers
 
+        self.ssl_context = ssl_context
+
         return self.connection
+
+
+@pytest.fixture
+def ca_path(tmp_path: Path) -> Path:
+    certificate = ssl.create_default_context().get_ca_certs(binary_form=True)[0]
+    path = tmp_path / "ca.pem"
+    _ = path.write_text(ssl.DER_cert_to_PEM_cert(certificate), encoding="ascii")
+    return path
 
 
 @dataclass
@@ -267,6 +284,7 @@ def test_runtime_config_requires_authenticated_wss_and_udp_endpoint() -> None:
         "SOUND_RTP_BIND_HOST": "0.0.0.0",
         "SOUND_RTP_BIND_PORT": "50006",
         "SOUND_RTP_ADVERTISED_HOST": "sound.example.test",
+        "ORCHESTRATOR_TLS_CA_PATH": "/etc/bitnp/internal-ca.pem",
     }
 
     # When: the production command loads its environment.
@@ -282,6 +300,7 @@ def test_runtime_config_requires_authenticated_wss_and_udp_endpoint() -> None:
         rtp_host="0.0.0.0",
         rtp_port=50_006,
         advertised_rtp_host="sound.example.test",
+        tls_ca_path=Path("/etc/bitnp/internal-ca.pem"),
     )
 
 
@@ -328,6 +347,8 @@ async def test_receive_runtime_binds_registers_announces_delivers_cancels_and_cl
     # Then: UDP precedes authenticated registration, command activates L16 playback, and late RTP is suppressed.
 
     assert connector.headers == {"authorization": "Bearer trusted-token"}
+
+    assert connector.ssl_context is None
 
     envelopes = [parse_event(message) for message in connection.received]
 
@@ -376,6 +397,122 @@ async def test_receive_runtime_binds_registers_announces_delivers_cancels_and_cl
     assert connection.closed == 1
 
     assert sink.closed == 1
+
+
+@pytest.mark.asyncio
+async def test_receive_runtime_passes_verified_ca_context_and_bearer_header_to_connector(
+    ca_path: Path,
+) -> None:
+    # Given: authenticated Sound WSS control with a configured CA bundle.
+
+
+    binding = _FakeUdpBinding()
+    binder = _FakeUdpBinder(binding=binding)
+    connector = _FakeControlConnector(
+        connection=_FakeControlConnection(messages=[], binding=binding), udp_binder=binder
+    )
+    runtime = ReceiveRuntime(
+        config=SoundReceiveConfig(
+            orchestrator_ws_url="wss://orchestrator.example.test/control",
+            trusted_lan_token="trusted-token",
+            stream_id="sound-stream-001",
+            rtp_host="0.0.0.0",
+            rtp_port=50_006,
+            advertised_rtp_host="sound.example.test",
+            tls_ca_path=ca_path,
+        ),
+        udp_binder=binder,
+        control_connector=connector,
+        playback_sink=_RecordingSink(),
+    )
+
+    # When: the runtime opens the connector.
+
+
+    await runtime.run()
+
+    # Then: the connector receives a verified context without changing bearer headers.
+
+
+    assert isinstance(connector.ssl_context, ssl.SSLContext)
+    assert connector.ssl_context.check_hostname is True
+    assert connector.ssl_context.verify_mode == ssl.CERT_REQUIRED
+    assert connector.headers == {"authorization": "Bearer trusted-token"}
+
+
+@pytest.mark.asyncio
+async def test_websockets_control_connector_passes_context_to_wss_connect(
+    monkeypatch: pytest.MonkeyPatch, ca_path: Path
+) -> None:
+    # Given: a verified CA context and the real Sound connector.
+
+
+    connection = _FakeControlConnection(messages=[], binding=_FakeUdpBinding())
+    captured_context: ssl.SSLContext | None = None
+    captured_headers: dict[str, str] | None = None
+
+    async def open_connection(
+        url: str, *, additional_headers: dict[str, str], ssl: ssl.SSLContext
+    ) -> _FakeControlConnection:
+        nonlocal captured_context, captured_headers
+        assert url == "wss://orchestrator.example.test/control"
+        captured_context = ssl
+        captured_headers = additional_headers
+        return connection
+
+    monkeypatch.setattr("sound.receive.connect", open_connection)
+    context = ssl.create_default_context()
+    context.load_verify_locations(cafile=str(ca_path))
+
+    # When: the concrete connector opens the secure route.
+
+
+    _ = await WebsocketsControlConnector().connect(
+        "wss://orchestrator.example.test/control",
+        {"authorization": "Bearer trusted-token"},
+        context,
+    )
+
+    # Then: the real websockets call receives the exact verified context and header.
+
+
+    assert captured_context is context
+    assert captured_headers == {"authorization": "Bearer trusted-token"}
+
+
+@pytest.mark.asyncio
+async def test_websockets_control_connector_omits_ssl_for_ws_connect(
+    monkeypatch: pytest.MonkeyPatch, ca_path: Path
+) -> None:
+    # Given: a plaintext route while a CA context is supplied by a caller.
+
+
+    connection = _FakeControlConnection(messages=[], binding=_FakeUdpBinding())
+    captured_headers: dict[str, str] | None = None
+
+    async def open_connection(
+        url: str, *, additional_headers: dict[str, str]
+    ) -> _FakeControlConnection:
+        nonlocal captured_headers
+        assert url == "ws://127.0.0.1/control"
+        captured_headers = additional_headers
+        return connection
+
+    monkeypatch.setattr("sound.receive.connect", open_connection)
+    context = ssl.create_default_context()
+    context.load_verify_locations(cafile=str(ca_path))
+
+    # When: the concrete connector opens the plaintext route.
+
+
+    _ = await WebsocketsControlConnector().connect(
+        "ws://127.0.0.1/control", {}, context
+    )
+
+    # Then: the real websockets call remains free of an SSL keyword.
+
+
+    assert captured_headers == {}
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,10 @@
 
 import asyncio
+import ssl
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol, override
+from urllib.parse import urlparse
 
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosedOK
@@ -21,6 +23,7 @@ from sound.portaudio_playback import PortAudioPlaybackSink
 from sound.receive_config import SoundReceiveConfig, load_runtime_config
 from sound.rtp_playback import L16PlaybackSink, RtpPlaybackReceiver
 from sound.stream_flush import StreamFlush, StreamFlushAck, StreamFlushController
+from sound.tls import build_tls_context
 
 _CODEC: Final[dict[str, JsonValue]] = {
     "format": "L16",
@@ -96,7 +99,12 @@ class ControlConnection(Protocol):
 
 class ControlConnector(Protocol):
 
-    async def connect(self, url: str, headers: dict[str, str]) -> ControlConnection:
+    async def connect(
+        self,
+        url: str,
+        headers: dict[str, str],
+        ssl_context: ssl.SSLContext | None,
+    ) -> ControlConnection:
 
         ...
 
@@ -159,10 +167,20 @@ class AsyncioUdpBinder:
 
 class WebsocketsControlConnector:
 
-    async def connect(self, url: str, headers: dict[str, str]) -> ControlConnection:
+    async def connect(
+        self,
+        url: str,
+        headers: dict[str, str],
+        ssl_context: ssl.SSLContext | None,
+    ) -> ControlConnection:
+
+        if urlparse(url).scheme != "wss" or ssl_context is None:
+            return _WebsocketsControlConnection(
+                await connect(url, additional_headers=headers)
+            )
 
         return _WebsocketsControlConnection(
-            await connect(url, additional_headers=headers)
+            await connect(url, additional_headers=headers, ssl=ssl_context)
         )
 
 
@@ -244,8 +262,14 @@ class ReceiveRuntime:
         try:
             headers = _authorization_headers(self.config.trusted_lan_token)
 
+            tls_context = (
+                build_tls_context(self.config.tls_ca_path)
+                if urlparse(self.config.orchestrator_ws_url).scheme == "wss"
+                else None
+            )
+
             connection = await self.control_connector.connect(
-                self.config.orchestrator_ws_url, headers
+                self.config.orchestrator_ws_url, headers, tls_context
             )
 
             notification_writer = NotificationWriter(connection)
