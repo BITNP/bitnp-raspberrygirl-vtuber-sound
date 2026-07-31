@@ -65,6 +65,8 @@ class SounddeviceRawOutputStreamFactory:
             samplerate=samplerate,
             channels=channels,
             dtype=dtype,
+            blocksize=320,
+            latency="high",
         )
 
 
