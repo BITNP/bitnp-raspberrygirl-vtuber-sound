@@ -248,7 +248,8 @@ class ReceiveRuntime:
 
         def receive_packet(packet: bytes) -> None:
             # Datagram callbacks must stay bounded.  Playback is clocked below
-            # so short scheduler/network bursts cannot underflow PortAudio.
+            # by PortAudio, so short scheduler/network bursts cannot underflow
+            # the device once the local reserve has been admitted.
             if not playback_queue.full():
                 playback_queue.put_nowait((packet, active_stream_id))
 
@@ -265,6 +266,11 @@ class ReceiveRuntime:
                             _RTP_FRAME_SECONDS * _JITTER_BUFFER_FRAMES
                         )
                         started = True
+                    # Do not use the asyncio task as a 20 ms media clock.  It
+                    # can wake late under ordinary desktop load, turning one
+                    # late timer into an audible hole.  The callback sink owns
+                    # the hardware clock; feed its bounded local PCM reserve
+                    # immediately so it can absorb scheduling/network bursts.
                     state_count = len(receiver.playback_states)
                     receiver.receive_packet(packet, stream_id=stream_id)
                     if (
@@ -279,7 +285,6 @@ class ReceiveRuntime:
                                 is_playing=True,
                             )
                         )
-                    await asyncio.sleep(_RTP_FRAME_SECONDS)
                 finally:
                     playback_queue.task_done()
 
