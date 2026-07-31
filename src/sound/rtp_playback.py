@@ -25,6 +25,8 @@ class StreamStatus(Enum):
 
     CANCELLED = "cancelled"
 
+    FINISHED = "finished"
+
 
 @dataclass(frozen=True, slots=True)
 class RtpPlaybackState:
@@ -55,6 +57,10 @@ class L16PlaybackSink(Protocol):
         ...
 
     def close_stream(self, stream_id: str) -> None:
+
+        ...
+
+    def finish_stream(self, stream_id: str) -> None:
 
         ...
 
@@ -162,6 +168,19 @@ class RtpPlaybackReceiver:
 
         return True
 
+    def finish_stream(self, stream_id: str, expected_ssrc: int) -> bool:
+        stream = self._streams.get(StreamId(stream_id))
+        if (
+            stream is None
+            or stream.status is not StreamStatus.ACTIVE
+            or stream.expected_ssrc != expected_ssrc
+        ):
+            return False
+        self._streams[StreamId(stream_id)] = replace(stream, status=StreamStatus.FINISHED)
+        if self._playback_sink is not None:
+            self._playback_sink.finish_stream(stream_id)
+        return True
+
     def receive_packet(self, packet: bytes, *, stream_id: str | None = None) -> None:
 
         parsed_packet = _parse_l16_rtp_packet(packet)
@@ -199,6 +218,9 @@ class RtpPlaybackReceiver:
                 )
 
             case StreamStatus.CANCELLED:
+                return
+
+            case StreamStatus.FINISHED:
                 return
 
 

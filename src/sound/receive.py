@@ -369,6 +369,34 @@ class ReceiveRuntime:
 
                                         active_command = None
 
+                            case "media.stream.end":
+                                if active_stream_id is None or active_command is None:
+                                    continue
+                                data = required_mapping(event, "data")
+                                if (
+                                    required_str(data, "stream_id") != active_stream_id
+                                    or required_int(data, "cancellation_epoch")
+                                    != active_command.cancellation_epoch
+                                ):
+                                    continue
+                                # The final RTP packet was paced before this WSS
+                                # command. Allow it to reach UDP first, then drain
+                                # the actual PortAudio queue before reporting done.
+                                await asyncio.sleep(0.100)
+                                if receiver.finish_stream(
+                                    active_stream_id, required_int(data, "ssrc")
+                                ):
+                                    await notification_writer.send(
+                                        OutboundNotification(
+                                            message=self._state_envelope(
+                                                active_command, "finished"
+                                            )
+                                        )
+                                    )
+                                    active_stream_id = None
+                                    active_cancel_target = None
+                                    active_command = None
+
                             case _:
                                 continue
 

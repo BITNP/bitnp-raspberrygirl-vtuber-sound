@@ -115,6 +115,17 @@ class PortAudioPlaybackSink:
             finally:
                 stream.close()
 
+    def finish_stream(self, stream_id: str) -> None:
+
+        stream = self._streams.pop(StreamId(stream_id), None)
+
+        if stream is not None:
+            try:
+                stream.stop()
+
+            finally:
+                stream.close()
+
     def close(self) -> None:
 
         streams = tuple(self._streams.values())
