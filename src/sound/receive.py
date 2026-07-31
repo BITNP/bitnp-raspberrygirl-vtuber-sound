@@ -1,8 +1,10 @@
 
 import asyncio
+import logging
 import ssl
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from time import monotonic_ns
 from typing import Final, Literal, Protocol, override
 from urllib.parse import urlparse
 
@@ -32,6 +34,48 @@ _CODEC: Final[dict[str, JsonValue]] = {
     "payload_type": 96,
     "samples_per_frame": 320,
 }
+
+_LOGGER = logging.getLogger(__name__)
+_RTP_NOMINAL_GAP_MS: Final = 20.0
+_RTP_LATE_GAP_MS: Final = 40.0
+
+
+@dataclass(slots=True)
+class _IngressTiming:
+    """Per-output diagnostics that isolate upstream RTP delivery from playback."""
+
+    packet_count: int = 0
+    dropped_packets: int = 0
+    late_gap_count: int = 0
+    max_gap_ms: float = 0.0
+    _last_arrival_ns: int | None = None
+
+    def record_arrival(self) -> None:
+        now_ns = monotonic_ns()
+        previous_ns = self._last_arrival_ns
+        self._last_arrival_ns = now_ns
+        self.packet_count += 1
+        if previous_ns is None:
+            return
+        gap_ms = (now_ns - previous_ns) / 1_000_000
+        self.max_gap_ms = max(self.max_gap_ms, gap_ms)
+        if gap_ms > _RTP_LATE_GAP_MS:
+            self.late_gap_count += 1
+
+    def record_drop(self) -> None:
+        self.dropped_packets += 1
+
+    def log(self, *, stream_id: str) -> None:
+        _LOGGER.warning(
+            "rtp_ingress_diagnostic stream=%s packets=%d drops=%d late_gaps=%d "
+            + "max_gap_ms=%.3f nominal_gap_ms=%.1f",
+            stream_id,
+            self.packet_count,
+            self.dropped_packets,
+            self.late_gap_count,
+            self.max_gap_ms,
+            _RTP_NOMINAL_GAP_MS,
+        )
 
 _JITTER_BUFFER_FRAMES: Final = 10
 
@@ -242,6 +286,8 @@ class ReceiveRuntime:
 
         active_command: _ActiveCommand | None = None
 
+        ingress_timing = _IngressTiming()
+
         playback_queue: asyncio.Queue[tuple[bytes, str | None]] = asyncio.Queue(
             maxsize=256
         )
@@ -250,8 +296,11 @@ class ReceiveRuntime:
             # Datagram callbacks must stay bounded.  Playback is clocked below
             # by PortAudio, so short scheduler/network bursts cannot underflow
             # the device once the local reserve has been admitted.
-            if not playback_queue.full():
-                playback_queue.put_nowait((packet, active_stream_id))
+            ingress_timing.record_arrival()
+            if playback_queue.full():
+                ingress_timing.record_drop()
+                return
+            playback_queue.put_nowait((packet, active_stream_id))
 
         async def play_buffered_packets() -> None:
             started = False
@@ -332,6 +381,8 @@ class ReceiveRuntime:
 
                                 if active_stream_id is not None:
                                     active_command = _active_command(event)
+
+                                    ingress_timing = _IngressTiming()
 
                                     active_cancel_target = (
                                         active_command.segment_id or active_stream_id
@@ -422,6 +473,7 @@ class ReceiveRuntime:
                                 # command. Allow it to reach UDP first, then drain
                                 # the actual PortAudio queue before reporting done.
                                 await asyncio.sleep(0.100)
+                                ingress_timing.log(stream_id=active_stream_id)
                                 if receiver.finish_stream(
                                     active_stream_id, required_int(data, "ssrc")
                                 ):
