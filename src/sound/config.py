@@ -2,6 +2,7 @@
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final, NewType, override
 from urllib.parse import urlparse
 
@@ -23,6 +24,8 @@ HEALTH_HOST_KEY: Final = "SERVICE_HEALTH_HOST"
 HEALTH_PORT_KEY: Final = "SERVICE_HEALTH_PORT"
 
 TRUSTED_LAN_TOKEN_KEY: Final = "TRUSTED_LAN_TOKEN"
+
+TLS_CA_PATH_KEY: Final = "ORCHESTRATOR_TLS_CA_PATH"
 
 PEER_WS_URL_KEYS: Final = (
     "MIC_WS_URL",
@@ -61,6 +64,8 @@ class ServiceConfig:
 
     trusted_lan_token: TrustedLanToken | None = None
 
+    tls_ca_path: Path | None = None
+
 
 def load_config(env: Mapping[str, str] | None = None) -> ServiceConfig:
 
@@ -77,6 +82,7 @@ def load_config(env: Mapping[str, str] | None = None) -> ServiceConfig:
         ),
         health_port=_parse_health_port(source.get(HEALTH_PORT_KEY)),
         trusted_lan_token=_parse_trusted_lan_token(source.get(TRUSTED_LAN_TOKEN_KEY)),
+        tls_ca_path=_parse_optional_path(source.get(TLS_CA_PATH_KEY)),
     )
 
 
@@ -125,3 +131,10 @@ def _parse_trusted_lan_token(raw_token: str | None) -> TrustedLanToken | None:
         return None
 
     return TrustedLanToken(raw_token.strip())
+
+
+def _parse_optional_path(raw_path: str | None) -> Path | None:
+    if raw_path is None or raw_path.strip() == "":
+        return None
+
+    return Path(raw_path.strip())
