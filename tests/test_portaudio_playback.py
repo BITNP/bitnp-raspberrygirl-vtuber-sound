@@ -217,7 +217,9 @@ def test_receiver_does_not_advance_state_when_portaudio_write_fails() -> None:
     assert receiver.playback_states == []
 
 
-def _callback_playback_for_test(*, capacity: int = 12) -> _CallbackPlayback:
+def _callback_playback_for_test(
+    *, capacity: int = 12, started: bool = True
+) -> tuple[_CallbackPlayback, _RecordingRawOutputStream]:
     # The actual constructor opens a hardware stream.  Build only its already
     # allocated PCM queue so these tests can exercise the realtime callback
     # algorithm without requiring a PortAudio device.
@@ -231,14 +233,17 @@ def _callback_playback_for_test(*, capacity: int = 12) -> _CallbackPlayback:
     playback._available = 0
     playback._channels = 1
     playback._finishing = False
-    return playback
+    playback._started = started
+    stream = _RecordingRawOutputStream()
+    setattr(playback, "_stream", stream)  # noqa: B010 - test-only hardware seam.
+    return playback, stream
 
 
 def test_callback_playback_preserves_queue_order_across_ring_boundary() -> None:
     # Given: a small preallocated ring whose read/write position will wrap.
 
 
-    playback = _callback_playback_for_test()
+    playback, _ = _callback_playback_for_test()
     playback.push(b"abcdefgh")
     first = memoryview(bytearray(6))
     playback._callback(first, 3, None, None)
@@ -257,11 +262,31 @@ def test_callback_playback_preserves_queue_order_across_ring_boundary() -> None:
     assert bytes(second) == b"ghijklmnop"
 
 
+def test_callback_playback_starts_only_after_a_full_hardware_block_is_queued() -> None:
+    # Given: callback playback configured for its 60 ms hardware block.
+
+
+    playback, stream = _callback_playback_for_test(capacity=3_000, started=False)
+
+    # When: RTP's three 20 ms frames arrive in sequence.
+
+
+    playback.push(bytes(640))
+    playback.push(bytes(640))
+    assert stream.started is False
+    playback.push(bytes(640))
+
+    # Then: device playback starts with a complete block, not padded silence.
+
+
+    assert stream.started is True
+
+
 def test_callback_playback_fills_only_an_underrun_tail_with_silence() -> None:
     # Given: less PCM than the hardware callback requests.
 
 
-    playback = _callback_playback_for_test()
+    playback, _ = _callback_playback_for_test()
     playback.push(b"\x01\x02\x03\x04")
     output = memoryview(bytearray(8))
 
@@ -280,7 +305,7 @@ def test_callback_playback_rejects_queue_overflow_without_overwriting_pcm() -> N
     # Given: a full bounded realtime queue.
 
 
-    playback = _callback_playback_for_test(capacity=4)
+    playback, _ = _callback_playback_for_test(capacity=4)
     playback.push(b"abcd")
 
     # When: a producer attempts to overwrite queued audio.
@@ -301,7 +326,7 @@ def test_callback_playback_drain_does_not_stop_the_final_pcm_block() -> None:
     # Given: a completed stream with exactly one hardware block left to play.
 
 
-    playback = _callback_playback_for_test(capacity=8)
+    playback, _ = _callback_playback_for_test(capacity=8)
     playback.push(b"abcd")
     playback.finish()
 

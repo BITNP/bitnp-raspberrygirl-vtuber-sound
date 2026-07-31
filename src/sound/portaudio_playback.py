@@ -1,7 +1,7 @@
 
 import sys
 from threading import Lock
-from typing import Literal, Protocol, final
+from typing import Final, Literal, Protocol, final
 
 import sounddevice
 
@@ -10,6 +10,11 @@ from sound.rtp_playback import L16PlaybackFrame, StreamId
 type PlaybackDevice = int | str | None
 
 type NativeByteOrder = Literal["little", "big"]
+
+# RTP remains fixed at 20 ms / 320 samples.  Hardware callbacks deliberately
+# consume three RTP frames at a time: invoking Python every 20 ms leaves too
+# little scheduling slack for a loaded desktop and manifests as rare clicks.
+_CALLBACK_BLOCK_SAMPLES: Final = 960
 
 
 class RawOutputStream(Protocol):
@@ -66,7 +71,7 @@ class SounddeviceRawOutputStreamFactory:
             samplerate=samplerate,
             channels=channels,
             dtype=dtype,
-            blocksize=320,  # pyright: ignore[reportCallIssue]
+            blocksize=_CALLBACK_BLOCK_SAMPLES,  # pyright: ignore[reportCallIssue]
             latency="high",  # pyright: ignore[reportCallIssue]
         )
 
@@ -106,7 +111,6 @@ class PortAudioPlaybackSink:
                     sample_rate=frame.sample_rate,
                     channels=frame.channels,
                 )
-                callback_stream.start()
                 self._callback_streams[frame.stream_id] = callback_stream
                 callback_stream.push(
                     l16_payload_to_native_int16(frame.payload, byteorder=sys.byteorder)
@@ -197,9 +201,10 @@ class _CallbackPlayback:
         self._available = 0
         self._channels = channels
         self._finishing = False
+        self._started = False
         self._stream = sounddevice.RawOutputStream(
             device=device, samplerate=sample_rate, channels=channels, dtype="int16",
-            blocksize=320,  # pyright: ignore[reportCallIssue]
+            blocksize=_CALLBACK_BLOCK_SAMPLES,  # pyright: ignore[reportCallIssue]
             latency="high",  # pyright: ignore[reportCallIssue]
             callback=self._callback,  # pyright: ignore[reportCallIssue]
         )
@@ -208,6 +213,7 @@ class _CallbackPlayback:
         self._stream.start()
 
     def push(self, data: bytes) -> None:
+        should_start = False
         with self._lock:
             # A bounded buffer must never overwrite queued audio: doing so
             # creates a discontinuity.  The normal paced RTP producer remains
@@ -221,13 +227,25 @@ class _CallbackPlayback:
                 self._buffer[:remaining] = data[first:]
             self._write_offset = (self._write_offset + len(data)) % self._capacity
             self._available += len(data)
+            block_bytes = _CALLBACK_BLOCK_SAMPLES * 2 * self._channels
+            if not self._started and self._available >= block_bytes:
+                self._started = True
+                should_start = True
+        if should_start:
+            self.start()
 
     def abort(self) -> None:
         self._stream.abort(); self._stream.close()
 
     def finish(self) -> None:
+        should_start = False
         with self._lock:
             self._finishing = True
+            if not self._started and self._available > 0:
+                self._started = True
+                should_start = True
+        if should_start:
+            self.start()
 
     def stop(self) -> None:
         self._stream.stop(); self._stream.close()
