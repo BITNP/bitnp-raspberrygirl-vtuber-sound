@@ -24,7 +24,7 @@ Sound 通过 `ORCHESTRATOR_REPO` 引用 Orchestrator 的 `schemas/protocol/envel
 - 必须只连接 Orchestrator。
 - 必须先绑定 UDP，再注册 sink。
 - 必须只播放匹配 command 的流。
-- 必须报告 ready、queued、playing、cancelled 等规范状态。
+- 必须报告 ready、queued、playing、finished、cancelled 等规范状态；`finished` 只能在本地播放队列真实耗尽后发送。
 - `sound-play` 只用于本地一包诊断。
 - 生产部署在 `ORCHESTRATOR_TLS_CA_PATH` 设置同一个只读 PEM CA bundle，用于校验 Orchestrator WSS 证书。该路径也由 Orchestrator、Mic、Comments 使用；主机系统信任库只是已安装相同 CA 时的可选替代。
 
