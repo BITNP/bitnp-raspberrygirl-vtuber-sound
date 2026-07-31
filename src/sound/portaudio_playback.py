@@ -1,6 +1,5 @@
 
 import sys
-from collections import deque
 from threading import Lock
 from typing import Literal, Protocol, final
 
@@ -181,8 +180,18 @@ class _CallbackPlayback:
 
     def __init__(self, *, device: PlaybackDevice, sample_rate: int, channels: int) -> None:
         self._lock = Lock()
-        self._chunks: deque[bytes] = deque()
-        self._pending = b""
+        # Generated RTP arrives on the asyncio thread while PortAudio pulls from
+        # its realtime callback.  Keep the callback free of deque operations,
+        # bytes concatenation and per-block allocations: all three can cause a
+        # short underrun that is heard as a click or a rapidly broken voice.
+        # Ten seconds is deliberately far above the jitter reserve while still
+        # bounding latency and memory if a producer misbehaves.
+        self._capacity = sample_rate * channels * 2 * 10
+        self._buffer = bytearray(self._capacity)
+        self._silence = bytes(self._capacity)
+        self._read_offset = 0
+        self._write_offset = 0
+        self._available = 0
         self._stream = sounddevice.RawOutputStream(
             device=device, samplerate=sample_rate, channels=channels, dtype="int16",
             blocksize=320,  # pyright: ignore[reportCallIssue]
@@ -195,7 +204,18 @@ class _CallbackPlayback:
 
     def push(self, data: bytes) -> None:
         with self._lock:
-            self._chunks.append(data)
+            # A bounded buffer must never overwrite queued audio: doing so
+            # creates a discontinuity.  The normal paced RTP producer remains
+            # many orders below this limit, so overflow is an explicit failure.
+            if len(data) > self._capacity - self._available:
+                raise BufferError("PortAudio playback buffer overflow")
+            first = min(len(data), self._capacity - self._write_offset)
+            self._buffer[self._write_offset : self._write_offset + first] = data[:first]
+            remaining = len(data) - first
+            if remaining:
+                self._buffer[:remaining] = data[first:]
+            self._write_offset = (self._write_offset + len(data)) % self._capacity
+            self._available += len(data)
 
     def abort(self) -> None:
         self._stream.abort(); self._stream.close()
@@ -208,12 +228,20 @@ class _CallbackPlayback:
     ) -> None:
         _ = (time_info, status)
         needed = frames * 2
+        output = memoryview(outdata).cast("B")
+        if needed > self._capacity:
+            raise RuntimeError("PortAudio callback block exceeds playback buffer")
         with self._lock:
-            while len(self._pending) < needed and self._chunks:
-                self._pending += self._chunks.popleft()
-            output = self._pending[:needed]
-            self._pending = self._pending[needed:]
-        memoryview(outdata).cast("B")[:] = output + bytes(needed - len(output))
+            copied = min(needed, self._available)
+            first = min(copied, self._capacity - self._read_offset)
+            output[:first] = self._buffer[self._read_offset : self._read_offset + first]
+            remaining = copied - first
+            if remaining:
+                output[first:copied] = self._buffer[:remaining]
+            self._read_offset = (self._read_offset + copied) % self._capacity
+            self._available -= copied
+        if copied < needed:
+            output[copied:needed] = self._silence[: needed - copied]
 
 
 def l16_payload_to_native_int16(payload: bytes, *, byteorder: NativeByteOrder) -> bytes:
