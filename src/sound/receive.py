@@ -477,6 +477,12 @@ class ReceiveRuntime:
                         await asyncio.sleep(0.001)
 
                 finally:
+                    # The control peer may close immediately after its final
+                    # media command while the RTP datagram is already in the
+                    # local jitter buffer.  Do not cancel the clocked consumer
+                    # first: that loses an authorized frame before Sound has
+                    # had a chance to render it.
+                    await playback_queue.join()
                     notification_writer.close()
                     _ = playback_task.cancel()
 
