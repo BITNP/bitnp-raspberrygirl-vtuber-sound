@@ -82,7 +82,17 @@ class _FakeControlConnection:
                 _rtp_packet(timestamp=320, ssrc=0x1234_5678, payload=b"\x00\x01")
             )
 
-            return self.messages.pop(0)
+            return self.messages.pop(0) if self.messages else None
+
+        if message == "deliver_two":
+            self.binding.deliver(
+                _rtp_packet(timestamp=320, ssrc=0x1234_5678, payload=b"\x00\x01")
+            )
+            self.binding.deliver(
+                _rtp_packet(timestamp=640, ssrc=0x1234_5678, payload=b"\x00\x02")
+            )
+
+            return self.messages.pop(0) if self.messages else None
 
         return message
 
@@ -397,6 +407,44 @@ async def test_receive_runtime_binds_registers_announces_delivers_cancels_and_cl
     assert connection.closed == 1
 
     assert sink.closed == 1
+
+
+@pytest.mark.asyncio
+async def test_receive_runtime_reports_playing_once_for_a_continuous_rtp_stream() -> None:
+    # Given: two valid RTP frames for one announced output stream.
+
+
+    binding = _FakeUdpBinding()
+    binder = _FakeUdpBinder(binding=binding)
+    connection = _FakeControlConnection(
+        messages=[_command(), "deliver_two"], binding=binding
+    )
+    runtime = ReceiveRuntime(
+        config=SoundReceiveConfig(
+            orchestrator_ws_url="wss://orchestrator.example.test/control",
+            trusted_lan_token="trusted-token",
+            stream_id="sound-stream-001",
+            rtp_host="0.0.0.0",
+            rtp_port=50_006,
+            advertised_rtp_host="sound.example.test",
+            session_id="session-001",
+        ),
+        udp_binder=binder,
+        control_connector=_FakeControlConnector(
+            connection=connection, udp_binder=binder
+        ),
+        playback_sink=_RecordingSink(),
+    )
+
+    # When: the frames are rendered without a stream transition.
+
+
+    await runtime.run()
+
+    # Then: control sees one state transition rather than 50 messages per second.
+
+
+    assert _state_values(connection.received) == ["queued", "playing"]
 
 
 @pytest.mark.asyncio

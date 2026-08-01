@@ -257,6 +257,8 @@ class ReceiveRuntime:
 
         active_command: _ActiveCommand | None = None
 
+        playing_stream_id: str | None = None
+
         ingress_timing = _IngressTiming()
 
         playback_queue: asyncio.Queue[tuple[bytes, str | None]] = asyncio.Queue(
@@ -274,6 +276,7 @@ class ReceiveRuntime:
             playback_queue.put_nowait((packet, active_stream_id))
 
         async def play_buffered_packets() -> None:
+            nonlocal playing_stream_id
             started = False
             while True:
                 packet, stream_id = await playback_queue.get()
@@ -294,6 +297,8 @@ class ReceiveRuntime:
                     if (
                         notification_writer is not None
                         and active_command is not None
+                        and stream_id is not None
+                        and stream_id != playing_stream_id
                         and len(receiver.playback_states) > state_count
                     ):
                         notification_writer.enqueue(
@@ -303,6 +308,11 @@ class ReceiveRuntime:
                                 is_playing=True,
                             )
                         )
+                        # ``playing`` is a state transition, not per-frame
+                        # telemetry.  Sending one WebSocket command for every
+                        # 20 ms RTP frame makes the control path compete with
+                        # the real-time playback path (50 sends/second).
+                        playing_stream_id = stream_id
                 finally:
                     playback_queue.task_done()
 
@@ -351,6 +361,8 @@ class ReceiveRuntime:
                                 if active_stream_id is not None:
                                     active_command = _active_command(event)
 
+                                    playing_stream_id = None
+
                                     ingress_timing = _IngressTiming()
 
                                     active_cancel_target = (
@@ -397,6 +409,8 @@ class ReceiveRuntime:
 
                                     active_stream_id = None
 
+                                    playing_stream_id = None
+
                                     active_cancel_target = None
 
                                     active_command = None
@@ -422,6 +436,8 @@ class ReceiveRuntime:
 
                                     if acknowledgement.stream_id == active_stream_id:
                                         active_stream_id = None
+
+                                        playing_stream_id = None
 
                                         active_cancel_target = None
 
@@ -465,6 +481,7 @@ class ReceiveRuntime:
                                         )
                                     )
                                     active_stream_id = None
+                                    playing_stream_id = None
                                     active_cancel_target = None
                                     active_command = None
 
