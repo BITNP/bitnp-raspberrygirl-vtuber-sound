@@ -5,8 +5,10 @@ from typing import Protocol
 from sound import playback
 from sound.rtp_playback import (
     L16PlaybackFrame,
-    RtpPlaybackReceiver as ConcreteRtpPlaybackReceiver,
     StreamId,
+)
+from sound.rtp_playback import (
+    RtpPlaybackReceiver as ConcreteRtpPlaybackReceiver,
 )
 
 

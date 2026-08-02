@@ -105,6 +105,7 @@ class _FakeControlConnection:
 @dataclass
 class _ClosedOKControlConnection(_FakeControlConnection):
 
+    @override
     async def recv(self) -> str | None:
 
         if not self.messages:
