@@ -318,6 +318,16 @@ class ReceiveRuntime:
 
         binding.set_packet_handler(receive_packet)
 
+        async def receive_control_message() -> str | None:
+            assert connection is not None
+            try:
+                return await connection.recv()
+            except ConnectionClosedOK:
+                # A peer's normal close (for example 1001, going away) ends
+                # the control loop. Handling it before TaskGroup exits avoids
+                # wrapping it in an ExceptionGroup and allows graceful cleanup.
+                return None
+
         try:
             headers = _authorization_headers(self.config.trusted_lan_token)
 
@@ -344,7 +354,7 @@ class ReceiveRuntime:
                         )
                     )
 
-                    while message := await connection.recv():
+                    while message := await receive_control_message():
                         event = parse_event(message)
 
                         event_type = required_str(event, "event_type")
@@ -502,9 +512,6 @@ class ReceiveRuntime:
                     await playback_queue.join()
                     notification_writer.close()
                     _ = playback_task.cancel()
-
-        except ConnectionClosedOK:
-            return
 
         finally:
             receiver.close()

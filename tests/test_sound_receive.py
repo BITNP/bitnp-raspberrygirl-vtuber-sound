@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import override
 
 import pytest
+from websockets.exceptions import ConnectionClosedOK
 
 from sound.orchestrator_ws import parse_event, required_mapping, required_str
 from sound.receive import ReceiveRuntime, WebsocketsControlConnector
@@ -99,6 +100,17 @@ class _FakeControlConnection:
     async def close(self) -> None:
 
         self.closed += 1
+
+
+@dataclass
+class _ClosedOKControlConnection(_FakeControlConnection):
+
+    async def recv(self) -> str | None:
+
+        if not self.messages:
+            raise ConnectionClosedOK(None, None)
+
+        return await super().recv()
 
 
 @dataclass
@@ -406,6 +418,44 @@ async def test_receive_runtime_binds_registers_announces_delivers_cancels_and_cl
 
     assert connection.closed == 1
 
+    assert sink.closed == 1
+
+
+@pytest.mark.asyncio
+async def test_receive_runtime_gracefully_handles_normal_websocket_close() -> None:
+    # Given: the peer closes its WebSocket normally after registration.
+
+    binding = _FakeUdpBinding()
+    binder = _FakeUdpBinder(binding=binding)
+    connection = _ClosedOKControlConnection(messages=[], binding=binding)
+    connector = _FakeControlConnector(connection=connection, udp_binder=binder)
+    sink = _RecordingSink()
+    runtime = ReceiveRuntime(
+        config=SoundReceiveConfig(
+            orchestrator_ws_url="wss://orchestrator.example.test/control",
+            trusted_lan_token="trusted-token",
+            stream_id="sound-stream-001",
+            rtp_host="0.0.0.0",
+            rtp_port=50_006,
+            advertised_rtp_host="sound.example.test",
+            session_id="session-001",
+        ),
+        udp_binder=binder,
+        control_connector=connector,
+        playback_sink=sink,
+    )
+
+    # When: the receive loop observes a normal WebSocket close.
+
+    await runtime.run()
+
+    # Then: the TaskGroup exits cleanly and owned resources are shut down.
+
+    assert [parse_event(message)["event_type"] for message in connection.received] == [
+        "media.rtp.sink.register"
+    ]
+    assert binding.close_calls == 1
+    assert connection.closed == 1
     assert sink.closed == 1
 
 
