@@ -6,7 +6,7 @@ import ssl
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from time import monotonic_ns
-from typing import Final, Literal, Protocol, override
+from typing import Final, Literal, Protocol, cast, override
 from urllib.parse import urlparse
 
 from websockets.asyncio.client import ClientConnection, connect
@@ -689,8 +689,9 @@ def _authorization_headers(token: str | None) -> dict[str, str]:
 
 def _is_reconnectable(error: BaseException) -> bool:
     if isinstance(error, BaseExceptionGroup):
-        return bool(error.exceptions) and all(
-            _is_reconnectable(item) for item in error.exceptions
+        grouped = cast("BaseExceptionGroup[BaseException]", error)
+        return bool(grouped.exceptions) and all(
+            _is_reconnectable(item) for item in grouped.exceptions
         )
     return isinstance(error, ConnectionClosedError | OSError | TimeoutError)
 

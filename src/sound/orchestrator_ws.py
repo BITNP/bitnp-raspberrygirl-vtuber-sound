@@ -4,6 +4,7 @@ import math
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import cast
 from uuid import uuid4
 
 type JsonValue = (
@@ -151,12 +152,12 @@ def _json_value(value: object) -> JsonValue:
         return value
 
     if isinstance(value, list):
-        return [_json_value(item) for item in value]
+        return [_json_value(item) for item in cast("list[object]", value)]
 
     if isinstance(value, dict):
         parsed: dict[str, JsonValue] = {}
 
-        for key, item in value.items():
+        for key, item in cast("dict[object, object]", value).items():
             if not isinstance(key, str):
                 raise TypeError("control envelope keys must be strings")
 
