@@ -218,34 +218,34 @@ class RtpPlaybackReceiver:
                 finish_stream(stream_id)
         return True
 
-    def receive_packet(self, packet: bytes, *, stream_id: str | None = None) -> None:
+    def receive_packet(self, packet: bytes, *, stream_id: str | None = None) -> bool:
 
         parsed_packet = _parse_l16_rtp_packet(packet)
 
         if parsed_packet is None:
-            return
+            return False
 
         resolved_stream_id = self._resolve_stream_id(stream_id)
 
         if resolved_stream_id is None:
-            return
+            return False
 
         stream = self._streams.get(resolved_stream_id)
 
         if stream is None:
-            return
+            return False
 
         if (
             stream.expected_ssrc is not None
             and parsed_packet.ssrc != stream.expected_ssrc
         ):
-            return
+            return False
 
         if parsed_packet.l16_sample_count % stream.channels != 0:
-            return
+            return False
 
         if stream.status is not StreamStatus.ACTIVE:
-            return
+            return False
         jitter = self._jitter.setdefault(resolved_stream_id, _JitterState())
         expected = jitter.expected_sequence
         if expected is None:
@@ -253,11 +253,12 @@ class RtpPlaybackReceiver:
             expected = parsed_packet.sequence
         distance = (parsed_packet.sequence - expected) & 0xFFFF
         if distance >= 0x8000 or distance >= self._max_frames:
-            return
+            return False
         if parsed_packet.sequence in jitter.packets:
-            return
+            return False
         jitter.packets[parsed_packet.sequence] = parsed_packet
         self._drain_jitter(resolved_stream_id, final=False)
+        return True
 
     def tick(self) -> None:
         """Advance expired loss deadlines even when no new datagram arrives."""

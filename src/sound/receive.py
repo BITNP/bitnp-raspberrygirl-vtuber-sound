@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import os
 import random
@@ -46,6 +47,13 @@ _RTP_NOMINAL_GAP_MS: Final = 20.0
 _RTP_LATE_GAP_MS: Final = 40.0
 _RECONNECT_DELAYS: Final = (0.5, 1.0, 2.0, 4.0, 8.0, 10.0)
 _DRAIN_TIMEOUT_SECONDS: Final = 5.0
+
+
+def _rtp_packet_summary(packet: bytes) -> str:
+    sequence = int.from_bytes(packet[2:4], "big") if len(packet) >= 4 else -1
+    ssrc = int.from_bytes(packet[8:12], "big") if len(packet) >= 12 else -1
+    digest = hashlib.sha256(packet).hexdigest()[:16]
+    return f"bytes={len(packet)} sequence={sequence} ssrc={ssrc} sha256={digest}"
 
 
 @dataclass(slots=True)
@@ -313,6 +321,18 @@ class ReceiveRuntime:
             # by PortAudio, so short scheduler/network bursts cannot underflow
             # the device once the local reserve has been admitted.
             ingress_timing.record_arrival()
+            if ingress_timing.packet_count == 1:
+                _LOGGER.debug(
+                    "rtp_ingress_started stream=%s sender=%s expected_sender=%s %s",
+                    active_stream_id,
+                    sender,
+                    (
+                        None
+                        if active_command is None
+                        else active_command.rtp_sender_endpoint
+                    ),
+                    _rtp_packet_summary(packet),
+                )
             if (
                 sender is not None
                 and active_command is not None
@@ -340,7 +360,15 @@ class ReceiveRuntime:
                     # the hardware clock; feed its bounded local PCM reserve
                     # immediately so it can absorb scheduling/network bursts.
                     state_count = len(receiver.playback_states)
-                    receiver.receive_packet(packet, stream_id=stream_id)
+                    accepted = receiver.receive_packet(packet, stream_id=stream_id)
+                    if not accepted:
+                        ingress_timing.record_drop()
+                        if ingress_timing.dropped_packets == 1:
+                            _LOGGER.debug(
+                                "rtp_ingress_rejected stream=%s reason=receiver_validation %s",
+                                stream_id,
+                                _rtp_packet_summary(packet),
+                            )
                     if (
                         notification_writer is not None
                         and active_command is not None
