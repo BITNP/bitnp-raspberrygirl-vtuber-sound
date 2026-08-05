@@ -25,6 +25,7 @@ Sound 通过 `ORCHESTRATOR_REPO` 引用 Orchestrator 的 `schemas/protocol/envel
 - 必须先绑定 UDP，再注册 sink。
 - 必须只播放匹配 command 的流。
 - 必须报告 ready、queued、playing、finished、cancelled、error 等规范状态；`finished` 只能在 jitter/本地播放队列耗尽、PortAudio callback 停止且 stream 关闭后发送。五秒 drain 超时只发送 `error`。异常 WSS 关闭会完整释放本次连接的 UDP、队列和 worker，再按带抖动的上限 10 秒退避重连。
+- RTP jitter 默认以 60 ms 为目标、200 ms 为硬上限；乱序包在租约内重排，缺失序号超过 60 ms 后只补一个 20 ms L16 静音帧，再继续等待后续缺口。收到 `media.stream.end` 后即使未达到初始目标也会排空短流。
 - `sound-play` 只用于本地一包诊断。
 - 生产部署在 `ORCHESTRATOR_TLS_CA_PATH` 设置同一个只读 PEM CA bundle，用于校验 Orchestrator WSS 证书。该路径也由 Orchestrator、Mic、Comments 使用；主机系统信任库只是已安装相同 CA 时的可选替代。
 

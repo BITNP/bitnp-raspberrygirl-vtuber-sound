@@ -23,6 +23,8 @@ uv run pytest
 
 现场讲解链路中，Sound 应在 Orchestrator 后、Mic 前启动。它接收的是 Orchestrator 生成的 RTP，不是 Mic 原始 RTP。只有 jitter、播放队列与 PortAudio stream 均真实耗尽并关闭后才发送 `finished`；五秒内不能完成物理 drain 时强制关闭该流并发送 `error`，绝不发送 `finished`。控制连接异常断开时 Sound 会关闭 UDP/WSS/播放与 worker 资源，并按 0.5、1、2、4、8、10 秒上限及 ±20% 抖动重连。
 
+默认 jitter 目标为 60 ms、上限为 200 ms。单个 RTP 序号缺失超过目标时间时会补一个 20 ms 静音帧以维持播放时钟；短音频收到结束命令后无需凑满目标缓存也会正常排空。
+
 部署前应以运行 `sound-receive` 的同一服务账号确认 PortAudio 输出设备可用。桌面 PipeWire/PulseAudio 场景中，systemd 系统服务不会自动继承登录用户的音频会话；应配置该账号的音频会话或使用经验证的 host-specific systemd drop-in。必要时把 `BITNP_PLAYBACK_DEVICE` 固定为已验证的设备名或索引，不要依赖默认设备。
 
 `sound-play` 只从 stdin 读取一个完整 RTP packet 并用 PortAudio 本地播放。它不连接 Orchestrator，也不是部署播放路径。

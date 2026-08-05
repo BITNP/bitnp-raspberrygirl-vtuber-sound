@@ -1,7 +1,9 @@
 
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from enum import Enum
+from time import monotonic_ns
 from typing import Final, NewType, Protocol
 
 StreamId = NewType("StreamId", str)
@@ -99,6 +101,8 @@ class _JitterState:
     packets: dict[int, _L16RtpPacket] = field(default_factory=dict)
     expected_sequence: int | None = None
     started: bool = False
+    missing_since_ms: int | None = None
+    last_timestamp: RtpTimestamp | None = None
 
 
 class RtpPlaybackReceiver:
@@ -109,6 +113,7 @@ class RtpPlaybackReceiver:
         playback_sink: L16PlaybackSink | None = None,
         jitter_target_ms: int = 20,
         jitter_max_ms: int = 200,
+        clock_ms: Callable[[], int] = lambda: monotonic_ns() // 1_000_000,
     ) -> None:
 
         if jitter_target_ms < 20 or jitter_target_ms % 20:
@@ -125,6 +130,8 @@ class RtpPlaybackReceiver:
         self._playback_states: deque[RtpPlaybackState] = deque(maxlen=512)
         self._target_frames: int = jitter_target_ms // 20
         self._max_frames: int = jitter_max_ms // 20
+        self._target_ms = jitter_target_ms
+        self._clock_ms = clock_ms
 
     @property
     def playback_states(self) -> list[RtpPlaybackState]:
@@ -252,6 +259,12 @@ class RtpPlaybackReceiver:
         jitter.packets[parsed_packet.sequence] = parsed_packet
         self._drain_jitter(resolved_stream_id, final=False)
 
+    def tick(self) -> None:
+        """Advance expired loss deadlines even when no new datagram arrives."""
+        for stream_id, stream in tuple(self._streams.items()):
+            if stream.status is StreamStatus.ACTIVE:
+                self._drain_jitter(stream_id, final=False)
+
     def close(self) -> None:
 
         if self._playback_sink is not None:
@@ -270,12 +283,17 @@ class RtpPlaybackReceiver:
             sequence = jitter.expected_sequence
             packet = jitter.packets.pop(sequence, None)
             if packet is None:
-                if not final and len(jitter.packets) < self._target_frames:
-                    return
+                if not final:
+                    now_ms = self._clock_ms()
+                    if jitter.missing_since_ms is None:
+                        jitter.missing_since_ms = now_ms
+                        return
+                    if now_ms - jitter.missing_since_ms < self._target_ms:
+                        return
                 timestamp = RtpTimestamp(
-                    (int(self._playback_states[-1].rtp_timestamp) + 320)
+                    (int(jitter.last_timestamp) + 320)
                     & 0xFFFF_FFFF
-                    if self._playback_states
+                    if jitter.last_timestamp is not None
                     else 0
                 )
                 packet = _L16RtpPacket(
@@ -285,7 +303,11 @@ class RtpPlaybackReceiver:
                     l16_sample_count=320,
                     payload=b"\x00" * _L16_FRAME_BYTES,
                 )
+                jitter.missing_since_ms = None
+            else:
+                jitter.missing_since_ms = None
             self._emit_packet(stream_id, packet)
+            jitter.last_timestamp = packet.timestamp
             jitter.expected_sequence = (sequence + 1) & 0xFFFF
 
     def _emit_packet(self, stream_id: StreamId, packet: _L16RtpPacket) -> None:

@@ -372,3 +372,64 @@ def test_rtp_receiver_closes_playback_sink_on_shutdown() -> None:
     # Then: playback resources are deterministically closed.
 
     assert sink.closed is True
+
+
+def test_jitter_loss_waits_for_deadline_then_inserts_exactly_one_silence() -> None:
+    now = 1_000
+    sink = _RecordingPlaybackSink(frames=[], closed_streams=[])
+    receiver = ConcreteRtpPlaybackReceiver(
+        playback_sink=sink,
+        jitter_target_ms=60,
+        clock_ms=lambda: now,
+    )
+    receiver.announce_stream(
+        stream_id="stream-loss", sample_rate=16_000, channels=1, expected_ssrc=7
+    )
+
+    receiver.receive_packet(_l16_rtp_packet(0, b"\x00\x01", sequence=1))
+    receiver.receive_packet(_l16_rtp_packet(640, b"\x00\x03", sequence=3))
+    receiver.receive_packet(_l16_rtp_packet(960, b"\x00\x04", sequence=4))
+
+    assert len(sink.frames) == 1
+    now += 59
+    receiver.tick()
+    assert len(sink.frames) == 1
+    now += 1
+    receiver.tick()
+    assert [frame.payload for frame in sink.frames] == [
+        _frame(b"\x00\x01"),
+        b"\x00" * 640,
+        _frame(b"\x00\x03"),
+        _frame(b"\x00\x04"),
+    ]
+    receiver.tick()
+    assert len(sink.frames) == 4
+
+
+def test_jitter_reorders_sequence_wrap_and_final_drain_ignores_target() -> None:
+    sink = _RecordingPlaybackSink(frames=[], closed_streams=[])
+    receiver = ConcreteRtpPlaybackReceiver(
+        playback_sink=sink, jitter_target_ms=60
+    )
+    receiver.announce_stream(
+        stream_id="stream-wrap", sample_rate=16_000, channels=1, expected_ssrc=7
+    )
+    receiver.receive_packet(_l16_rtp_packet(0, b"\x00\x01", sequence=65_535))
+    receiver.receive_packet(_l16_rtp_packet(640, b"\x00\x03", sequence=1))
+    receiver.receive_packet(_l16_rtp_packet(320, b"\x00\x02", sequence=0))
+
+    assert [frame.payload for frame in sink.frames] == [
+        _frame(b"\x00\x01"),
+        _frame(b"\x00\x02"),
+        _frame(b"\x00\x03"),
+    ]
+
+    receiver.announce_stream(
+        stream_id="stream-short", sample_rate=16_000, channels=1, expected_ssrc=8
+    )
+    receiver.receive_packet(
+        _l16_rtp_packet(0, b"\x00\x05", sequence=9, ssrc=8),
+        stream_id="stream-short",
+    )
+    assert receiver.finish_stream("stream-short", 8) is True
+    assert sink.frames[-1].payload == _frame(b"\x00\x05")

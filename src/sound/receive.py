@@ -304,6 +304,7 @@ class ReceiveRuntime:
         playback_queue: asyncio.Queue[tuple[bytes, str | None]] = asyncio.Queue(
             maxsize=256
         )
+        jitter_wakeup = asyncio.Event()
 
         def receive_packet(
             packet: bytes, sender: tuple[str, int] | None = None
@@ -323,6 +324,7 @@ class ReceiveRuntime:
                 ingress_timing.record_drop()
                 return
             playback_queue.put_nowait((packet, active_stream_id))
+            jitter_wakeup.set()
 
         async def play_buffered_packets() -> None:
             nonlocal playing_stream_id
@@ -361,6 +363,16 @@ class ReceiveRuntime:
                 finally:
                     playback_queue.task_done()
 
+        async def advance_jitter_deadlines() -> None:
+            while True:
+                try:
+                    async with asyncio.timeout(0.020):
+                        await jitter_wakeup.wait()
+                except TimeoutError:
+                    pass
+                jitter_wakeup.clear()
+                receiver.tick()
+
         binding.set_packet_handler(receive_packet)
 
         async def receive_control_message() -> str | None:
@@ -391,6 +403,7 @@ class ReceiveRuntime:
             async with asyncio.TaskGroup() as task_group:
                 _ = task_group.create_task(notification_writer.run())
                 playback_task = task_group.create_task(play_buffered_packets())
+                jitter_task = task_group.create_task(advance_jitter_deadlines())
 
                 try:
                     await notification_writer.send(
@@ -603,6 +616,7 @@ class ReceiveRuntime:
                     await playback_queue.join()
                     notification_writer.close()
                     _ = playback_task.cancel()
+                    _ = jitter_task.cancel()
 
         finally:
             receiver.close()
