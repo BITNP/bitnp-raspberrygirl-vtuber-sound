@@ -1,15 +1,16 @@
 import asyncio
 import logging
 import os
+import random
 import ssl
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import monotonic_ns
 from typing import Final, Literal, Protocol, override
 from urllib.parse import urlparse
 
 from websockets.asyncio.client import ClientConnection, connect
-from websockets.exceptions import ConnectionClosedOK
+from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 from sound.notification_writer import NotificationWriter, OutboundNotification
 from sound.orchestrator_ws import (
@@ -43,6 +44,8 @@ _CODEC: Final[dict[str, JsonValue]] = {
 _LOGGER = logging.getLogger(__name__)
 _RTP_NOMINAL_GAP_MS: Final = 20.0
 _RTP_LATE_GAP_MS: Final = 40.0
+_RECONNECT_DELAYS: Final = (0.5, 1.0, 2.0, 4.0, 8.0, 10.0)
+_DRAIN_TIMEOUT_SECONDS: Final = 5.0
 
 
 @dataclass(slots=True)
@@ -244,7 +247,33 @@ class ReceiveRuntime:
 
     playback_sink: L16PlaybackSink
 
+    _registered: bool = field(default=False, init=False, repr=False)
+
     async def run(self) -> None:
+        attempt = 0
+        while True:
+            self._registered = False
+            try:
+                await self._run_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                if not _is_reconnectable(error):
+                    raise
+                if self._registered:
+                    attempt = 0
+                delay = _RECONNECT_DELAYS[min(attempt, len(_RECONNECT_DELAYS) - 1)]
+                attempt += 1
+                _LOGGER.exception(
+                    "sound_connection_failed session=%s outcome=reconnect delay=%.3f",
+                    self.config.session_id,
+                    delay,
+                )
+                await asyncio.sleep(delay * random.uniform(0.8, 1.2))
+                continue
+            return
+
+    async def _run_once(self) -> None:
 
         binding = await self.udp_binder.bind(self.config.rtp_host, self.config.rtp_port)
 
@@ -369,6 +398,7 @@ class ReceiveRuntime:
                             message=self._register_envelope(binding.port)
                         )
                     )
+                    self._registered = True
 
                     while message := await receive_control_message():
                         event = parse_event(message)
@@ -530,7 +560,9 @@ class ReceiveRuntime:
                                     )
                                     try:
                                         if drain is not None:
-                                            async with asyncio.timeout(5):
+                                            async with asyncio.timeout(
+                                                _DRAIN_TIMEOUT_SECONDS
+                                            ):
                                                 await drain(active_stream_id)
                                     except TimeoutError:
                                         self.playback_sink.close_stream(active_stream_id)
@@ -653,6 +685,14 @@ def _authorization_headers(token: str | None) -> dict[str, str]:
         return {}
 
     return {"authorization": f"Bearer {token}"}
+
+
+def _is_reconnectable(error: BaseException) -> bool:
+    if isinstance(error, BaseExceptionGroup):
+        return bool(error.exceptions) and all(
+            _is_reconnectable(item) for item in error.exceptions
+        )
+    return isinstance(error, ConnectionClosedError | OSError | TimeoutError)
 
 
 def _bound_udp_port(transport: _SocketAddressTransport) -> int:

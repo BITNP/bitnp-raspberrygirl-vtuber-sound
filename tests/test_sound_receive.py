@@ -259,6 +259,29 @@ def _cancel() -> str:
     )
 
 
+def _end() -> str:
+    return json.dumps(
+        {
+            "schema_version": "1.0.0",
+            "event_type": "media.stream.end",
+            "event_id": "end-001",
+            "source": "orchestrator",
+            "time": "2026-07-08T00:00:10Z",
+            "trace_id": "trace-001",
+            "session_id": "session-001",
+            "turn_id": "turn-001",
+            "segment_id": "segment-001",
+            "seq": 10,
+            "data": {
+                "command_id": "stream-command-001",
+                "stream_id": "sound-stream-001",
+                "cancellation_epoch": 3,
+                "ssrc": 0x1234_5678,
+            },
+        }
+    )
+
+
 def _flush() -> str:
 
     return json.dumps(
@@ -470,6 +493,66 @@ async def test_receive_runtime_gracefully_handles_normal_websocket_close() -> No
 
 
 @pytest.mark.asyncio
+async def test_receive_runtime_reconnects_abnormal_close_with_reset_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    @dataclass
+    class BrokenConnection(_FakeControlConnection):
+        @override
+        async def recv(self) -> str | None:
+            raise OSError
+
+    @dataclass
+    class ReconnectingConnector:
+        connections: list[_FakeControlConnection]
+
+        async def connect(
+            self,
+            url: str,
+            headers: dict[str, str],
+            ssl_context: ssl.SSLContext | None,
+        ) -> _FakeControlConnection:
+            _ = url, headers, ssl_context
+            return self.connections.pop(0)
+
+    delays: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    def fixed_jitter(_low: float, _high: float) -> float:
+        return 1.0
+
+    monkeypatch.setattr("sound.receive.random.uniform", fixed_jitter)
+    monkeypatch.setattr("sound.receive.asyncio.sleep", record_sleep)
+    binding = _FakeUdpBinding()
+    binder = _FakeUdpBinder(binding=binding)
+    broken = BrokenConnection(messages=[], binding=binding)
+    normal = _FakeControlConnection(messages=[], binding=binding)
+    runtime = ReceiveRuntime(
+        config=SoundReceiveConfig(
+            orchestrator_ws_url="wss://orchestrator.example.test/control",
+            trusted_lan_token="trusted-token",
+            stream_id="sound-stream-001",
+            rtp_host="0.0.0.0",
+            rtp_port=50_006,
+            advertised_rtp_host="sound.example.test",
+            session_id="session-001",
+        ),
+        udp_binder=binder,
+        control_connector=ReconnectingConnector([broken, normal]),
+        playback_sink=_RecordingSink(),
+    )
+
+    await runtime.run()
+
+    assert delays == [0.5]
+    assert broken.closed == 1
+    assert normal.closed == 1
+    assert binding.close_calls == 2
+
+
+@pytest.mark.asyncio
 async def test_receive_runtime_reports_playing_once_for_a_continuous_rtp_stream() -> None:
     # Given: two valid RTP frames for one announced output stream.
 
@@ -505,6 +588,54 @@ async def test_receive_runtime_reports_playing_once_for_a_continuous_rtp_stream(
 
 
     assert _state_values(connection.received) == ["queued", "playing"]
+
+
+@pytest.mark.asyncio
+async def test_receive_runtime_reports_error_when_physical_drain_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    @dataclass
+    class StalledSink(_RecordingSink):
+        closed_streams: list[str] = field(default_factory=list)
+
+        async def wait_stream_drained(self, stream_id: str) -> None:
+            _ = stream_id
+            await asyncio.Future[None]()
+
+        @override
+        def close_stream(self, stream_id: str) -> None:
+            self.closed_streams.append(stream_id)
+
+    monkeypatch.setattr("sound.receive._DRAIN_TIMEOUT_SECONDS", 0.01)
+    binding = _FakeUdpBinding()
+    binder = _FakeUdpBinder(binding=binding)
+    connection = _FakeControlConnection(
+        messages=[_command(), "deliver", _end()], binding=binding
+    )
+    sink = StalledSink()
+    runtime = ReceiveRuntime(
+        config=SoundReceiveConfig(
+            orchestrator_ws_url="wss://orchestrator.example.test/control",
+            trusted_lan_token="trusted-token",
+            stream_id="sound-stream-001",
+            rtp_host="0.0.0.0",
+            rtp_port=50_006,
+            advertised_rtp_host="sound.example.test",
+            session_id="session-001",
+        ),
+        udp_binder=binder,
+        control_connector=_FakeControlConnector(
+            connection=connection, udp_binder=binder
+        ),
+        playback_sink=sink,
+    )
+
+    await runtime.run()
+
+    assert _state_values(connection.received)[-1] == "error"
+    assert "finished" not in _state_values(connection.received)
+    assert sink.closed_streams
+    assert set(sink.closed_streams) == {"sound-stream-001"}
 
 
 @pytest.mark.asyncio
