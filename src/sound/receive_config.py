@@ -32,6 +32,17 @@ class SoundReceiveConfig:
 
     tls_ca_path: Path | None = None
 
+    jitter_target_ms: int = 60
+
+    jitter_max_ms: int = 200
+
+    def __post_init__(self) -> None:
+        if self.jitter_target_ms > self.jitter_max_ms:
+            raise ConfigError(
+                key="SOUND_JITTER_MAX_MS",
+                reason="must be greater than or equal to SOUND_JITTER_TARGET_MS",
+            )
+
 
 def load_runtime_config(env: Mapping[str, str] | None = None) -> SoundReceiveConfig:
 
@@ -69,6 +80,8 @@ def load_runtime_config(env: Mapping[str, str] | None = None) -> SoundReceiveCon
         session_id=source.get("SOUND_SESSION_ID", "sound-receive").strip(),
         playback_device=_playback_device(source),
         tls_ca_path=service_config.tls_ca_path,
+        jitter_target_ms=_jitter_ms(source, "SOUND_JITTER_TARGET_MS", 60),
+        jitter_max_ms=_jitter_ms(source, "SOUND_JITTER_MAX_MS", 200),
     )
 
 
@@ -114,3 +127,10 @@ def _playback_device(source: Mapping[str, str]) -> PlaybackDevice:
         return int(value)
 
     return value
+
+
+def _jitter_ms(source: Mapping[str, str], key: str, default: int) -> int:
+    raw = source.get(key, str(default)).strip()
+    if not raw.isdecimal() or int(raw) < 20 or int(raw) % 20:
+        raise ConfigError(key=key, reason="must be a positive multiple of 20 ms")
+    return int(raw)

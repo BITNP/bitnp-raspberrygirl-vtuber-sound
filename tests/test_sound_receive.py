@@ -21,11 +21,13 @@ class _FakeUdpBinding:
 
     port: int = 50_006
 
-    handler: Callable[[bytes], None] | None = None
+    handler: Callable[[bytes, tuple[str, int] | None], None] | None = None
 
     close_calls: int = 0
 
-    def set_packet_handler(self, handler: Callable[[bytes], None]) -> None:
+    def set_packet_handler(
+        self, handler: Callable[[bytes, tuple[str, int] | None], None]
+    ) -> None:
 
         self.handler = handler
 
@@ -33,7 +35,7 @@ class _FakeUdpBinding:
 
         assert self.handler is not None
 
-        self.handler(packet)
+        self.handler(packet, None)
 
     def close(self) -> None:
 
@@ -91,6 +93,9 @@ class _FakeControlConnection:
             )
             self.binding.deliver(
                 _rtp_packet(timestamp=640, ssrc=0x1234_5678, payload=b"\x00\x02")
+            )
+            self.binding.deliver(
+                _rtp_packet(timestamp=960, ssrc=0x1234_5678, payload=b"\x00\x03")
             )
 
             return self.messages.pop(0) if self.messages else None
@@ -227,7 +232,10 @@ def _command() -> str:
                     "payload_type": 96,
                     "samples_per_frame": 320,
                 },
-                "rtp_endpoint": {"host": "sound.example.test", "port": 50_006},
+                "rtp_sender_endpoint": {
+                    "host": "orchestrator.example.test",
+                    "port": 5004,
+                },
             },
         }
     )
@@ -278,7 +286,8 @@ def _flush() -> str:
 def _rtp_packet(*, timestamp: int, ssrc: int, payload: bytes) -> bytes:
 
     return (
-        bytes([0x80, 96, 0, 1])
+        bytes([0x80, 96])
+        + (timestamp // 320).to_bytes(2, "big")
         + timestamp.to_bytes(4, "big")
         + ssrc.to_bytes(4, "big")
         + payload
@@ -768,6 +777,7 @@ async def test_receive_runtime_returns_correlated_flush_ack_for_announced_genera
         "cancellation_epoch": 3,
         "request_id": "flush-request-001",
         "target_generated_ssrc": 0x1234_5678,
+        "disposition": "APPLIED",
     }
 
     assert (

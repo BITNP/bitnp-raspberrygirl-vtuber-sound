@@ -24,7 +24,12 @@ from sound.orchestrator_ws import (
 from sound.portaudio_playback import PortAudioPlaybackSink
 from sound.receive_config import SoundReceiveConfig, load_runtime_config
 from sound.rtp_playback import L16PlaybackSink, RtpPlaybackReceiver
-from sound.stream_flush import StreamFlush, StreamFlushAck, StreamFlushController
+from sound.stream_flush import (
+    FlushDisposition,
+    StreamFlush,
+    StreamFlushAck,
+    StreamFlushController,
+)
 from sound.tls import build_tls_context
 
 _CODEC: Final[dict[str, JsonValue]] = {
@@ -78,13 +83,11 @@ class _IngressTiming:
         )
 
 
-_JITTER_BUFFER_FRAMES: Final = 10
-
-_RTP_FRAME_SECONDS: Final = 0.020
-
 
 @dataclass(frozen=True, slots=True)
 class _ActiveCommand:
+    command_id: str
+
     trace_id: str
 
     session_id: str
@@ -95,14 +98,18 @@ class _ActiveCommand:
 
     segment_id: str | None
 
-    cancellation_epoch: int | None
+    cancellation_epoch: int
+
+    rtp_sender_endpoint: tuple[str, int]
 
 
 class UdpBinding(Protocol):
     @property
     def port(self) -> int: ...
 
-    def set_packet_handler(self, handler: Callable[[bytes], None]) -> None: ...
+    def set_packet_handler(
+        self, handler: Callable[[bytes, tuple[str, int] | None], None]
+    ) -> None: ...
 
     def close(self) -> None: ...
 
@@ -137,15 +144,13 @@ class ControlConnector(Protocol):
 class _DatagramProtocol(asyncio.DatagramProtocol):
     def __init__(self) -> None:
 
-        self.handler: Callable[[bytes], None] | None = None
+        self.handler: Callable[[bytes, tuple[str, int] | None], None] | None = None
 
     @override
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
 
-        _ = addr
-
         if self.handler is not None:
-            self.handler(data)
+            self.handler(data, addr)
 
 
 @dataclass(slots=True)
@@ -161,7 +166,9 @@ class _AsyncioUdpBinding:
 
         return self.bound_port
 
-    def set_packet_handler(self, handler: Callable[[bytes], None]) -> None:
+    def set_packet_handler(
+        self, handler: Callable[[bytes, tuple[str, int] | None], None]
+    ) -> None:
 
         self.protocol.handler = handler
 
@@ -241,7 +248,11 @@ class ReceiveRuntime:
 
         binding = await self.udp_binder.bind(self.config.rtp_host, self.config.rtp_port)
 
-        receiver = RtpPlaybackReceiver(playback_sink=self.playback_sink)
+        receiver = RtpPlaybackReceiver(
+            playback_sink=self.playback_sink,
+            jitter_target_ms=self.config.jitter_target_ms,
+            jitter_max_ms=self.config.jitter_max_ms,
+        )
 
         flushes = StreamFlushController(
             session_id=self.config.session_id, receiver=receiver
@@ -265,11 +276,20 @@ class ReceiveRuntime:
             maxsize=256
         )
 
-        def receive_packet(packet: bytes) -> None:
+        def receive_packet(
+            packet: bytes, sender: tuple[str, int] | None = None
+        ) -> None:
             # Datagram callbacks must stay bounded.  Playback is clocked below
             # by PortAudio, so short scheduler/network bursts cannot underflow
             # the device once the local reserve has been admitted.
             ingress_timing.record_arrival()
+            if (
+                sender is not None
+                and active_command is not None
+                and sender != active_command.rtp_sender_endpoint
+            ):
+                ingress_timing.record_drop()
+                return
             if playback_queue.full():
                 ingress_timing.record_drop()
                 return
@@ -282,10 +302,6 @@ class ReceiveRuntime:
                 packet, stream_id = await playback_queue.get()
                 try:
                     if not started:
-                        # Keep ten canonical 20 ms frames ahead of PortAudio.
-                        # Without this 200 ms reserve, one event-loop scheduling
-                        # delay is audible as the rapid hoarse discontinuity.
-                        await asyncio.sleep(_RTP_FRAME_SECONDS * _JITTER_BUFFER_FRAMES)
                         started = True
                     # Do not use the asyncio task as a 20 ms media clock.  It
                     # can wake late under ordinary desktop load, turning one
@@ -361,6 +377,15 @@ class ReceiveRuntime:
 
                         match event_type:
                             case "media.stream.command":
+                                candidate_command = _active_command(event)
+                                if active_command is not None:
+                                    if candidate_command == active_command:
+                                        continue
+                                    if (
+                                        candidate_command.cancellation_epoch
+                                        <= active_command.cancellation_epoch
+                                    ):
+                                        continue
                                 active_stream_id = _announce_command(
                                     receiver=receiver,
                                     event=event,
@@ -369,7 +394,7 @@ class ReceiveRuntime:
                                 )
 
                                 if active_stream_id is not None:
-                                    active_command = _active_command(event)
+                                    active_command = candidate_command
 
                                     playing_stream_id = None
 
@@ -429,12 +454,17 @@ class ReceiveRuntime:
                                 acknowledgement = flushes.apply(_flush(event))
 
                                 if acknowledgement is not None:
-                                    _discard_queued_stream(
-                                        playback_queue, acknowledgement.stream_id
-                                    )
-                                    await notification_writer.invalidate_playing(
-                                        acknowledgement.stream_id
-                                    )
+                                    if (
+                                        acknowledgement.disposition
+                                        is FlushDisposition.APPLIED
+                                    ):
+                                        _discard_queued_stream(
+                                            playback_queue,
+                                            acknowledgement.stream_id,
+                                        )
+                                        await notification_writer.invalidate_playing(
+                                            acknowledgement.stream_id
+                                        )
 
                                     await notification_writer.send(
                                         OutboundNotification(
@@ -444,7 +474,12 @@ class ReceiveRuntime:
                                         )
                                     )
 
-                                    if acknowledgement.stream_id == active_stream_id:
+                                    if (
+                                        acknowledgement.disposition
+                                        is FlushDisposition.APPLIED
+                                        and acknowledgement.stream_id
+                                        == active_stream_id
+                                    ):
                                         active_stream_id = None
 
                                         playing_stream_id = None
@@ -460,8 +495,9 @@ class ReceiveRuntime:
                                 if required_str(
                                     data, "stream_id"
                                 ) != active_stream_id or (
-                                    active_command.cancellation_epoch is not None
-                                    and required_int(data, "cancellation_epoch")
+                                    required_str(data, "command_id")
+                                    != active_command.command_id
+                                    or required_int(data, "cancellation_epoch")
                                     != active_command.cancellation_epoch
                                 ):
                                     continue
@@ -474,6 +510,7 @@ class ReceiveRuntime:
                                     active_stream_id, required_int(data, "ssrc")
                                 ):
                                     completed_command = _ActiveCommand(
+                                        command_id=active_command.command_id,
                                         trace_id=active_command.trace_id,
                                         session_id=active_command.session_id,
                                         seq=active_command.seq,
@@ -481,6 +518,9 @@ class ReceiveRuntime:
                                         segment_id=active_command.segment_id,
                                         cancellation_epoch=required_int(
                                             data, "cancellation_epoch"
+                                        ),
+                                        rtp_sender_endpoint=(
+                                            active_command.rtp_sender_endpoint
                                         ),
                                     )
                                     await notification_writer.send(
@@ -551,12 +591,11 @@ class ReceiveRuntime:
     def _state_envelope(self, command: _ActiveCommand, state: str) -> str:
 
         data: dict[str, JsonValue] = {
+            "command_id": command.command_id,
             "stream_id": self.config.stream_id,
             "state": state,
+            "cancellation_epoch": command.cancellation_epoch,
         }
-
-        if command.cancellation_epoch is not None:
-            data["cancellation_epoch"] = command.cancellation_epoch
 
         return encode_envelope(
             event_type="media.stream.state",
@@ -584,6 +623,7 @@ class ReceiveRuntime:
                 "cancellation_epoch": acknowledgement.cancellation_epoch,
                 "request_id": acknowledgement.request_id,
                 "target_generated_ssrc": acknowledgement.target_generated_ssrc,
+                "disposition": acknowledgement.disposition.value,
             },
         )
 
@@ -620,12 +660,8 @@ def _announce_command(
 
     stream_id = required_str(data, "stream_id")
 
-    endpoint = required_mapping(data, "rtp_endpoint")
-
-    if (
-        stream_id != expected_stream_id
-        or required_int(endpoint, "port") != expected_port
-    ):
+    _ = expected_port
+    if stream_id != expected_stream_id:
         return None
 
     if required_mapping(data, "codec") != _CODEC:
@@ -661,21 +697,18 @@ def _active_command(event: Mapping[str, JsonValue]) -> _ActiveCommand:
     data = required_mapping(event, "data")
 
     return _ActiveCommand(
+        command_id=required_str(data, "command_id"),
         trace_id=required_str(event, "trace_id"),
         session_id=required_str(event, "session_id"),
         seq=required_int(event, "seq"),
         turn_id=optional_str(event, "turn_id"),
         segment_id=optional_str(event, "segment_id"),
-        cancellation_epoch=_optional_int(data, "cancellation_epoch"),
+        cancellation_epoch=required_int(data, "cancellation_epoch"),
+        rtp_sender_endpoint=(
+            required_str(required_mapping(data, "rtp_sender_endpoint"), "host"),
+            required_int(required_mapping(data, "rtp_sender_endpoint"), "port"),
+        ),
     )
-
-
-def _optional_int(source: Mapping[str, JsonValue], field: str) -> int | None:
-
-    if field not in source:
-        return None
-
-    return required_int(source, field)
 
 
 def _discard_queued_stream(

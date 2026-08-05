@@ -115,6 +115,7 @@ def _l16_rtp_packet(
     payload_type: int = 96,
     ssrc: int = 7,
     exact_frame: bool = True,
+    sequence: int = 1,
 ) -> bytes:
 
     first_byte = version << 6
@@ -122,7 +123,8 @@ def _l16_rtp_packet(
     second_byte = payload_type
 
     header = (
-        bytes([first_byte, second_byte, 0, 1])
+        bytes([first_byte, second_byte])
+        + sequence.to_bytes(2, "big")
         + timestamp.to_bytes(4, "big")
         + ssrc.to_bytes(4, "big")
     )
@@ -151,7 +153,9 @@ def test_rtp_receiver_advances_stream_relative_playback_state_for_announced_l16_
 
     receiver.receive_packet(_l16_rtp_packet(960, b"\x00\x01\xff\xfe"))
 
-    receiver.receive_packet(_l16_rtp_packet(962, b"\x00\x02\xff\xfd"))
+    receiver.receive_packet(
+        _l16_rtp_packet(962, b"\x00\x02\xff\xfd", sequence=2)
+    )
 
     # Then: emitted playback state is stream-owned, URI-free, and monotonically advances with RTP.
 

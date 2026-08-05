@@ -1,5 +1,6 @@
 
-from dataclasses import dataclass, replace
+from collections import deque
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Final, NewType, Protocol
 
@@ -82,6 +83,8 @@ class _AnnouncedStream:
 @dataclass(frozen=True, slots=True)
 class _L16RtpPacket:
 
+    sequence: int
+
     timestamp: RtpTimestamp
 
     ssrc: int
@@ -91,17 +94,41 @@ class _L16RtpPacket:
     payload: bytes
 
 
+@dataclass(slots=True)
+class _JitterState:
+    packets: dict[int, _L16RtpPacket] = field(default_factory=dict)
+    expected_sequence: int | None = None
+    started: bool = False
+
+
 class RtpPlaybackReceiver:
 
-    def __init__(self, *, playback_sink: L16PlaybackSink | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        playback_sink: L16PlaybackSink | None = None,
+        jitter_target_ms: int = 20,
+        jitter_max_ms: int = 200,
+    ) -> None:
+
+        if jitter_target_ms < 20 or jitter_target_ms % 20:
+            raise ValueError("jitter_target_ms")
+        if jitter_max_ms < jitter_target_ms or jitter_max_ms % 20:
+            raise ValueError("jitter_max_ms")
 
         self._streams: dict[StreamId, _AnnouncedStream] = {}
 
-        self._rejected_ssrcs: set[int] = set()
+        self._jitter: dict[StreamId, _JitterState] = {}
 
         self._playback_sink: L16PlaybackSink | None = playback_sink
 
-        self.playback_states: list[RtpPlaybackState] = []
+        self._playback_states: deque[RtpPlaybackState] = deque(maxlen=512)
+        self._target_frames: int = jitter_target_ms // 20
+        self._max_frames: int = jitter_max_ms // 20
+
+    @property
+    def playback_states(self) -> list[RtpPlaybackState]:
+        return list(self._playback_states)
 
     def announce_stream(
         self,
@@ -134,6 +161,7 @@ class RtpPlaybackReceiver:
             status=StreamStatus.ACTIVE,
             playback_position_samples=PlaybackPositionSamples(0),
         )
+        self._jitter[resolved_stream_id] = _JitterState()
 
     def cancel_stream(self, stream_id: str) -> None:
 
@@ -158,8 +186,6 @@ class RtpPlaybackReceiver:
         if stream is None or stream.expected_ssrc != target_generated_ssrc:
             return False
 
-        self._rejected_ssrcs.add(target_generated_ssrc)
-
         self.cancel_stream(stream_id)
 
         return True
@@ -172,7 +198,11 @@ class RtpPlaybackReceiver:
             or stream.expected_ssrc != expected_ssrc
         ):
             return False
-        self._streams[StreamId(stream_id)] = replace(stream, status=StreamStatus.FINISHED)
+        resolved_stream_id = StreamId(stream_id)
+        self._drain_jitter(resolved_stream_id, final=True)
+        self._streams[resolved_stream_id] = replace(
+            self._streams[resolved_stream_id], status=StreamStatus.FINISHED
+        )
         if self._playback_sink is not None:
             finish_stream = getattr(self._playback_sink, "finish_stream", None)
             if finish_stream is None:
@@ -186,9 +216,6 @@ class RtpPlaybackReceiver:
         parsed_packet = _parse_l16_rtp_packet(packet)
 
         if parsed_packet is None:
-            return
-
-        if parsed_packet.ssrc in self._rejected_ssrcs:
             return
 
         resolved_stream_id = self._resolve_stream_id(stream_id)
@@ -210,47 +237,78 @@ class RtpPlaybackReceiver:
         if parsed_packet.l16_sample_count % stream.channels != 0:
             return
 
-        match stream.status:
-            case StreamStatus.ACTIVE:
-                playback_position = PlaybackPositionSamples(
-                    int(stream.playback_position_samples)
-                    + parsed_packet.l16_sample_count // stream.channels
-                )
-
-            case StreamStatus.CANCELLED:
-                return
-
-            case StreamStatus.FINISHED:
-                return
-
-
-        if self._playback_sink is not None:
-            self._playback_sink.write(
-                L16PlaybackFrame(
-                    stream_id=resolved_stream_id,
-                    sample_rate=stream.sample_rate,
-                    channels=stream.channels,
-                    payload=parsed_packet.payload,
-                )
-            )
-
-        self._streams[resolved_stream_id] = replace(
-            stream,
-            playback_position_samples=playback_position,
-        )
-
-        self.playback_states.append(
-            RtpPlaybackState(
-                stream_id=resolved_stream_id,
-                rtp_timestamp=parsed_packet.timestamp,
-                playback_position_samples=playback_position,
-            )
-        )
+        if stream.status is not StreamStatus.ACTIVE:
+            return
+        jitter = self._jitter.setdefault(resolved_stream_id, _JitterState())
+        expected = jitter.expected_sequence
+        if expected is None:
+            jitter.expected_sequence = parsed_packet.sequence
+            expected = parsed_packet.sequence
+        distance = (parsed_packet.sequence - expected) & 0xFFFF
+        if distance >= 0x8000 or distance >= self._max_frames:
+            return
+        if parsed_packet.sequence in jitter.packets:
+            return
+        jitter.packets[parsed_packet.sequence] = parsed_packet
+        self._drain_jitter(resolved_stream_id, final=False)
 
     def close(self) -> None:
 
         if self._playback_sink is not None:
             self._playback_sink.close()
+
+    def _drain_jitter(self, stream_id: StreamId, *, final: bool) -> None:
+        jitter = self._jitter.get(stream_id)
+        stream = self._streams.get(stream_id)
+        if jitter is None or stream is None or jitter.expected_sequence is None:
+            return
+        if not jitter.started:
+            if not final and len(jitter.packets) < self._target_frames:
+                return
+            jitter.started = True
+        while jitter.packets:
+            sequence = jitter.expected_sequence
+            packet = jitter.packets.pop(sequence, None)
+            if packet is None:
+                if not final and len(jitter.packets) < self._target_frames:
+                    return
+                timestamp = RtpTimestamp(
+                    (int(self._playback_states[-1].rtp_timestamp) + 320)
+                    & 0xFFFF_FFFF
+                    if self._playback_states
+                    else 0
+                )
+                packet = _L16RtpPacket(
+                    sequence=sequence,
+                    timestamp=timestamp,
+                    ssrc=stream.expected_ssrc or 1,
+                    l16_sample_count=320,
+                    payload=b"\x00" * _L16_FRAME_BYTES,
+                )
+            self._emit_packet(stream_id, packet)
+            jitter.expected_sequence = (sequence + 1) & 0xFFFF
+
+    def _emit_packet(self, stream_id: StreamId, packet: _L16RtpPacket) -> None:
+        stream = self._streams[stream_id]
+        playback_position = PlaybackPositionSamples(
+            int(stream.playback_position_samples)
+            + packet.l16_sample_count // stream.channels
+        )
+        if self._playback_sink is not None:
+            self._playback_sink.write(
+                L16PlaybackFrame(
+                    stream_id=stream_id,
+                    sample_rate=stream.sample_rate,
+                    channels=stream.channels,
+                    payload=packet.payload,
+                )
+            )
+        self._streams[stream_id] = replace(
+            stream, playback_position_samples=playback_position
+        )
+        self._playback_states.append(
+            RtpPlaybackState(stream_id, packet.timestamp, playback_position)
+        )
 
     def _resolve_stream_id(self, stream_id: str | None) -> StreamId | None:
 
@@ -304,6 +362,7 @@ def _parse_l16_rtp_packet(packet: bytes) -> _L16RtpPacket | None:
         return None
 
     return _L16RtpPacket(
+        sequence=int.from_bytes(packet[2:4], byteorder="big"),
         timestamp=RtpTimestamp(int.from_bytes(packet[4:8], byteorder="big")),
         ssrc=ssrc,
         l16_sample_count=len(payload) // 2,

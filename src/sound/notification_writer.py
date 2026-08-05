@@ -45,9 +45,11 @@ class NotificationWriter:
 
         self._connection = connection
 
-        self._queue: asyncio.Queue[_WriterItem] = asyncio.Queue()
+        self._queue: asyncio.Queue[_WriterItem] = asyncio.Queue(maxsize=128)
 
         self._invalidated_playing_streams: set[str] = set()
+
+        self._pending_playing_streams: set[str] = set()
 
     def invalidate_playing(self, stream_id: str) -> asyncio.Future[None]:
 
@@ -55,7 +57,10 @@ class NotificationWriter:
 
         completion = asyncio.get_running_loop().create_future()
 
-        self._queue.put_nowait(_WriterBarrier(completion))
+        if self._queue.full():
+            completion.set_result(None)
+        else:
+            self._queue.put_nowait(_WriterBarrier(completion))
 
         return completion
 
@@ -63,19 +68,35 @@ class NotificationWriter:
 
         completion = asyncio.get_running_loop().create_future()
 
+        if (
+            notification.is_playing
+            and notification.stream_id in self._pending_playing_streams
+        ):
+            completion.set_result(None)
+            return
+
+        if self._queue.full():
+            completion.set_result(None)
+            return
+
+        if notification.is_playing and notification.stream_id is not None:
+            self._pending_playing_streams.add(notification.stream_id)
+
         self._queue.put_nowait(_QueuedNotification(notification, completion))
 
     async def send(self, notification: OutboundNotification) -> None:
 
         completion = asyncio.get_running_loop().create_future()
 
-        self._queue.put_nowait(_QueuedNotification(notification, completion))
-
+        await self._queue.put(_QueuedNotification(notification, completion))
         await completion
 
     def close(self) -> None:
 
-        self._queue.put_nowait(None)
+        if not self._queue.full():
+            self._queue.put_nowait(None)
+        else:
+            _ = asyncio.create_task(self._queue.put(None))
 
     async def run(self) -> None:
 
@@ -95,9 +116,14 @@ class NotificationWriter:
                     ):
                         completion.set_result(None)
 
+                        self._pending_playing_streams.discard(notification.stream_id)
+
                         continue
 
                     await self._connection.send(notification.message)
+
+                    if notification.is_playing and notification.stream_id is not None:
+                        self._pending_playing_streams.discard(notification.stream_id)
 
                     completion.set_result(None)
 

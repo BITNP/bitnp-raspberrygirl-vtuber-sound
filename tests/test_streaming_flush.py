@@ -4,7 +4,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sound.rtp_playback import RtpPlaybackReceiver
-from sound.stream_flush import StreamFlush, StreamFlushAck, StreamFlushController
+from sound.stream_flush import (
+    FlushDisposition,
+    StreamFlush,
+    StreamFlushAck,
+    StreamFlushController,
+)
 
 
 @dataclass
@@ -60,7 +65,7 @@ def test_flush_clears_generated_playback_and_acknowledges_once_idempotently() ->
 
     assert first == StreamFlushAck.from_flush(flush)
 
-    assert second == first
+    assert second == StreamFlushAck.from_flush(flush, FlushDisposition.REPLAYED)
 
 
 def test_flush_rejects_stale_epoch_wrong_session_and_raw_mic_ssrc() -> None:
@@ -118,7 +123,9 @@ def test_flush_replays_exact_ack_and_rejects_older_epoch_without_resuming_playba
 
     # Then: only the exact retry receives the prior acknowledgement and stale media stays blocked.
     assert acknowledgement == StreamFlushAck.from_flush(accepted)
-    assert duplicate == acknowledgement
+    assert duplicate == StreamFlushAck.from_flush(
+        accepted, FlushDisposition.REPLAYED
+    )
     assert older is None
     assert receiver.playback_states == []
 

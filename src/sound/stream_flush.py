@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
+from time import monotonic
 from typing import Protocol, final
 
 
@@ -29,6 +31,11 @@ class StreamFlush:
 
     target_generated_ssrc: int
 
+
+class FlushDisposition(StrEnum):
+    APPLIED = "APPLIED"
+    REPLAYED = "REPLAYED"
+
 @dataclass(frozen=True, slots=True)
 class StreamFlushAck:
 
@@ -46,8 +53,16 @@ class StreamFlushAck:
 
     target_generated_ssrc: int
 
+    disposition: FlushDisposition
+
     @classmethod
-    def from_flush(cls, flush: StreamFlush) -> StreamFlushAck:
+    def from_flush(
+        cls,
+        flush: StreamFlush,
+        disposition: FlushDisposition | None = None,
+    ) -> StreamFlushAck:
+
+        resolved = FlushDisposition.APPLIED if disposition is None else disposition
 
         return cls(
             session_id=flush.session_id,
@@ -57,6 +72,7 @@ class StreamFlushAck:
             cancellation_epoch=flush.cancellation_epoch,
             request_id=flush.request_id,
             target_generated_ssrc=flush.target_generated_ssrc,
+            disposition=resolved,
         )
 
 
@@ -71,7 +87,9 @@ class StreamFlushController:
 
         self._epochs: dict[str, int] = {}
 
-        self._acknowledgements: dict[tuple[str, int, str], StreamFlushAck] = {}
+        self._latest_acknowledgements: dict[
+            str, tuple[tuple[str, int, str], StreamFlushAck, float]
+        ] = {}
 
     def apply(self, flush: StreamFlush) -> StreamFlushAck | None:
 
@@ -80,10 +98,9 @@ class StreamFlushController:
 
         key = (flush.stream_id, flush.cancellation_epoch, flush.request_id)
 
-        duplicate = self._acknowledgements.get(key)
-
-        if duplicate is not None:
-            return duplicate
+        latest = self._latest_acknowledgements.get(flush.stream_id)
+        if latest is not None and latest[0] == key and monotonic() - latest[2] <= 5:
+            return StreamFlushAck.from_flush(flush, FlushDisposition.REPLAYED)
 
         previous_epoch = self._epochs.get(flush.stream_id)
 
@@ -100,6 +117,10 @@ class StreamFlushController:
 
         self._epochs[flush.stream_id] = flush.cancellation_epoch
 
-        self._acknowledgements[key] = acknowledgement
+        self._latest_acknowledgements[flush.stream_id] = (
+            key,
+            acknowledgement,
+            monotonic(),
+        )
 
         return acknowledgement
