@@ -523,13 +523,32 @@ class ReceiveRuntime:
                                             active_command.rtp_sender_endpoint
                                         ),
                                     )
-                                    await notification_writer.send(
-                                        OutboundNotification(
-                                            message=self._state_envelope(
-                                                completed_command, "finished"
+                                    drain = getattr(
+                                        self.playback_sink,
+                                        "wait_stream_drained",
+                                        None,
+                                    )
+                                    try:
+                                        if drain is not None:
+                                            async with asyncio.timeout(5):
+                                                await drain(active_stream_id)
+                                    except TimeoutError:
+                                        self.playback_sink.close_stream(active_stream_id)
+                                        await notification_writer.send(
+                                            OutboundNotification(
+                                                message=self._state_envelope(
+                                                    completed_command, "error"
+                                                )
                                             )
                                         )
-                                    )
+                                    else:
+                                        await notification_writer.send(
+                                            OutboundNotification(
+                                                message=self._state_envelope(
+                                                    completed_command, "finished"
+                                                )
+                                            )
+                                        )
                                     active_stream_id = None
                                     playing_stream_id = None
                                     active_cancel_target = None

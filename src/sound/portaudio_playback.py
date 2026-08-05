@@ -1,4 +1,5 @@
 
+import asyncio
 import sys
 from threading import Lock
 from typing import Final, Literal, Protocol, final
@@ -94,6 +95,8 @@ class PortAudioPlaybackSink:
 
         self._callback_streams: dict[StreamId, _CallbackPlayback] = {}
 
+        self._draining_callbacks: dict[StreamId, _CallbackPlayback] = {}
+
     def write(self, frame: L16PlaybackFrame) -> None:
 
         stream = self._streams.get(frame.stream_id)
@@ -137,6 +140,7 @@ class PortAudioPlaybackSink:
         callback_stream = self._callback_streams.pop(StreamId(stream_id), None)
         if callback_stream is not None:
             callback_stream.abort()
+            _ = self._draining_callbacks.pop(StreamId(stream_id), None)
             return
 
         if stream is not None:
@@ -155,6 +159,7 @@ class PortAudioPlaybackSink:
             # the blocking writer, a callback stream still owns queued PCM here;
             # request an orderly drain instead of cutting its whole tail off.
             callback_stream.finish()
+            self._draining_callbacks[StreamId(stream_id)] = callback_stream
             return
 
         if stream is not None:
@@ -164,6 +169,13 @@ class PortAudioPlaybackSink:
             finally:
                 stream.close()
 
+    async def wait_stream_drained(self, stream_id: str) -> None:
+        callback_stream = self._draining_callbacks.get(StreamId(stream_id))
+        if callback_stream is None:
+            return
+        await callback_stream.wait_drained()
+        _ = self._draining_callbacks.pop(StreamId(stream_id), None)
+
     def close(self) -> None:
 
         streams = tuple(self._streams.values())
@@ -171,6 +183,8 @@ class PortAudioPlaybackSink:
         self._streams.clear()
         callback_streams = tuple(self._callback_streams.values())
         self._callback_streams.clear()
+        callback_streams += tuple(self._draining_callbacks.values())
+        self._draining_callbacks.clear()
         for callback_stream in callback_streams:
             callback_stream.stop()
 
@@ -202,11 +216,14 @@ class _CallbackPlayback:
         self._channels = channels
         self._finishing = False
         self._started = False
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._drained: asyncio.Event | None = None
         self._stream = sounddevice.RawOutputStream(
             device=device, samplerate=sample_rate, channels=channels, dtype="int16",
             blocksize=_CALLBACK_BLOCK_SAMPLES,  # pyright: ignore[reportCallIssue]
             latency="high",  # pyright: ignore[reportCallIssue]
             callback=self._callback,  # pyright: ignore[reportCallIssue]
+            finished_callback=self._finished,  # pyright: ignore[reportCallIssue]
         )
 
     def start(self) -> None:
@@ -235,9 +252,17 @@ class _CallbackPlayback:
             self.start()
 
     def abort(self) -> None:
-        self._stream.abort(); self._stream.close()
+        self._stream.abort()
+        self._stream.close()
+        self._signal_drained()
 
     def finish(self) -> None:
+        try:
+            self._loop = asyncio.get_running_loop()
+            self._drained = asyncio.Event()
+        except RuntimeError:
+            self._loop = None
+            self._drained = None
         should_start = False
         with self._lock:
             self._finishing = True
@@ -246,9 +271,33 @@ class _CallbackPlayback:
                 should_start = True
         if should_start:
             self.start()
+        elif not self._started:
+            self._stream.close()
+            self._signal_drained()
+
+    async def wait_drained(self) -> None:
+        drained = self._drained
+        if drained is not None:
+            _ = await drained.wait()
 
     def stop(self) -> None:
-        self._stream.stop(); self._stream.close()
+        self._stream.stop()
+        self._stream.close()
+        self._signal_drained()
+
+    def _finished(self) -> None:
+        loop = self._loop
+        if loop is not None:
+            _ = loop.call_soon_threadsafe(self._complete_drain)
+
+    def _complete_drain(self) -> None:
+        self._stream.close()
+        self._signal_drained()
+
+    def _signal_drained(self) -> None:
+        drained = self._drained
+        if drained is not None:
+            drained.set()
 
     def _callback(
         self, outdata: memoryview, frames: int, time_info: object, status: object
