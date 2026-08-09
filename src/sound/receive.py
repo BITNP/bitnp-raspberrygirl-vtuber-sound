@@ -43,6 +43,10 @@ _CODEC: Final[dict[str, JsonValue]] = {
 }
 
 _LOGGER = logging.getLogger(__name__)
+
+_MINIMUM_DEPENDENCY_LOG_LEVEL = logging.INFO
+
+_PROTOCOL_LOGGERS = ("websockets", "websockets.client", "websockets.server")
 _RTP_NOMINAL_GAP_MS: Final = 20.0
 _RTP_LATE_GAP_MS: Final = 40.0
 _RECONNECT_DELAYS: Final = (0.5, 1.0, 2.0, 4.0, 8.0, 10.0)
@@ -826,14 +830,22 @@ def _discard_queued_stream(
         _ = queue.put_nowait(packet)
 
 
-def main() -> None:
+def _configure_logging() -> None:
+    configured_level = getattr(
+        logging, os.environ.get("BITNP_LOG_LEVEL", "INFO").upper(), logging.INFO
+    )
     logging.basicConfig(
-        level=getattr(
-            logging, os.environ.get("BITNP_LOG_LEVEL", "INFO").upper(), logging.INFO
-        ),
+        level=configured_level,
         format="%(asctime)s.%(msecs)03d %(levelname)s %(name)s %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
+    dependency_level = max(configured_level, _MINIMUM_DEPENDENCY_LOG_LEVEL)
+    for logger_name in _PROTOCOL_LOGGERS:
+        logging.getLogger(logger_name).setLevel(dependency_level)
+
+
+def main() -> None:
+    _configure_logging()
 
     config = load_runtime_config()
 

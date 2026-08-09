@@ -1,6 +1,7 @@
 
 import asyncio
 import json
+import logging
 import ssl
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -12,9 +13,27 @@ from websockets.exceptions import ConnectionClosedOK
 
 from sound.config import ConfigError
 from sound.orchestrator_ws import parse_event, required_mapping, required_str
-from sound.receive import ReceiveRuntime, WebsocketsControlConnector
+from sound.receive import ReceiveRuntime, WebsocketsControlConnector, _configure_logging
 from sound.receive_config import SoundReceiveConfig, load_runtime_config
 from sound.rtp_playback import L16PlaybackFrame
+
+
+def test_debug_logging_keeps_websocket_handshake_headers_out_of_logs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    websocket_loggers = (
+        logging.getLogger("websockets"),
+        logging.getLogger("websockets.client"),
+        logging.getLogger("websockets.server"),
+    )
+    original_levels = tuple(logger.level for logger in websocket_loggers)
+    monkeypatch.setenv("BITNP_LOG_LEVEL", "DEBUG")
+    try:
+        _configure_logging()
+        assert all(logger.getEffectiveLevel() >= logging.INFO for logger in websocket_loggers)
+    finally:
+        for logger, original_level in zip(websocket_loggers, original_levels, strict=True):
+            logger.setLevel(original_level)
 
 
 @dataclass
