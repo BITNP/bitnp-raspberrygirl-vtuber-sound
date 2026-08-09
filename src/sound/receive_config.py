@@ -52,19 +52,13 @@ def load_runtime_config(env: Mapping[str, str] | None = None) -> SoundReceiveCon
 
     parsed_url = urlparse(service_config.orchestrator_ws_url)
 
-    loopback_ws = (
-        parsed_url.scheme == "ws"
-        and (parsed_url.hostname or "").lower() in {"127.0.0.1", "::1", "localhost"}
-        and source.get("SOUND_ALLOW_LOOPBACK_WS", "false").strip().lower() == "true"
-    )
-
-    if parsed_url.scheme != "wss" and not loopback_ws:
+    if parsed_url.scheme == "ws" and not _insecure_ws_allowed(source):
         raise ConfigError(
             key="ORCHESTRATOR_WS_URL",
-            reason="must use WSS outside explicit loopback test mode",
+            reason="must use WSS unless trusted-LAN insecure WS is explicitly enabled",
         )
 
-    if parsed_url.scheme == "wss" and service_config.trusted_lan_token is None:
+    if service_config.trusted_lan_token is None:
         raise ConfigError(
             key="TRUSTED_LAN_TOKEN", reason="must be set for sound-receive"
         )
@@ -93,6 +87,19 @@ def _required_value(source: Mapping[str, str], key: str) -> str:
         raise ConfigError(key=key, reason="must be set")
 
     return value
+
+
+def _insecure_ws_allowed(source: Mapping[str, str]) -> bool:
+
+    value = source.get("SOUND_ALLOW_LOOPBACK_WS", "false").strip().lower()
+
+    if value == "true":
+        return True
+
+    if value == "false":
+        return False
+
+    raise ConfigError(key="SOUND_ALLOW_LOOPBACK_WS", reason="must be true or false")
 
 
 def _port(raw_port: str | None) -> int:

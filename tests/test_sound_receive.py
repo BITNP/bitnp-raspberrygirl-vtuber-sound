@@ -10,6 +10,7 @@ from typing import override
 import pytest
 from websockets.exceptions import ConnectionClosedOK
 
+from sound.config import ConfigError
 from sound.orchestrator_ws import parse_event, required_mapping, required_str
 from sound.receive import ReceiveRuntime, WebsocketsControlConnector
 from sound.receive_config import SoundReceiveConfig, load_runtime_config
@@ -357,6 +358,37 @@ def test_runtime_config_requires_authenticated_wss_and_udp_endpoint() -> None:
         advertised_rtp_host="sound.example.test",
         tls_ca_path=Path("/etc/bitnp/internal-ca.pem"),
     )
+
+
+def test_runtime_config_allows_authenticated_ws_on_explicit_trusted_lan() -> None:
+    environment = {
+        "ORCHESTRATOR_WS_URL": "ws://orchestrator.lan:8443/control",
+        "TRUSTED_LAN_TOKEN": "sound-role-token",
+        "SOUND_ALLOW_LOOPBACK_WS": "true",
+        "SOUND_RTP_STREAM_ID": "sound-stream-001",
+        "SOUND_RTP_BIND_HOST": "0.0.0.0",
+        "SOUND_RTP_BIND_PORT": "50006",
+        "SOUND_RTP_ADVERTISED_HOST": "sound.lan",
+    }
+
+    config = load_runtime_config(environment)
+
+    assert config.orchestrator_ws_url == "ws://orchestrator.lan:8443/control"
+    assert config.trusted_lan_token == "sound-role-token"
+
+
+def test_runtime_config_requires_token_for_insecure_lan_ws() -> None:
+    environment = {
+        "ORCHESTRATOR_WS_URL": "ws://orchestrator.lan:8443/control",
+        "SOUND_ALLOW_LOOPBACK_WS": "true",
+        "SOUND_RTP_STREAM_ID": "sound-stream-001",
+        "SOUND_RTP_BIND_HOST": "0.0.0.0",
+        "SOUND_RTP_BIND_PORT": "50006",
+        "SOUND_RTP_ADVERTISED_HOST": "sound.lan",
+    }
+
+    with pytest.raises(ConfigError, match="TRUSTED_LAN_TOKEN"):
+        load_runtime_config(environment)
 
 
 @pytest.mark.asyncio
