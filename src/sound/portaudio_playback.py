@@ -138,9 +138,11 @@ class PortAudioPlaybackSink:
 
         stream = self._streams.pop(StreamId(stream_id), None)
         callback_stream = self._callback_streams.pop(StreamId(stream_id), None)
+        draining = self._draining_callbacks.pop(StreamId(stream_id), None)
+        if draining is not None and draining is not callback_stream:
+            draining.abort()
         if callback_stream is not None:
             callback_stream.abort()
-            _ = self._draining_callbacks.pop(StreamId(stream_id), None)
             return
 
         if stream is not None:
@@ -174,7 +176,8 @@ class PortAudioPlaybackSink:
         if callback_stream is None:
             return
         await callback_stream.wait_drained()
-        _ = self._draining_callbacks.pop(StreamId(stream_id), None)
+        if self._draining_callbacks.get(StreamId(stream_id)) is callback_stream:
+            _ = self._draining_callbacks.pop(StreamId(stream_id), None)
 
     def close(self) -> None:
 

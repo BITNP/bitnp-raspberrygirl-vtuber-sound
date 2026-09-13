@@ -308,6 +308,9 @@ class ReceiveRuntime:
         active_cancel_target: str | None = None
 
         active_command: _ActiveCommand | None = None
+        latest_command: _ActiveCommand | None = None
+        minimum_epoch = 0
+        drain_task: asyncio.Task[None] | None = None
 
         playing_stream_id: str | None = None
 
@@ -405,6 +408,43 @@ class ReceiveRuntime:
                 jitter_wakeup.clear()
                 receiver.tick()
 
+        async def drain_output(command: _ActiveCommand, stream_id: str, ssrc: int) -> None:
+            nonlocal active_command, active_stream_id, playing_stream_id, active_cancel_target
+            # Wait for cross-transport UDP/WSS ordering without occupying the
+            # control reader. Replacement/cancel cancels this exact drain task.
+            await asyncio.sleep(0.100)
+            if active_command is not command:
+                return
+            ingress_timing.log(stream_id=stream_id)
+            if not receiver.finish_stream(stream_id, ssrc):
+                return
+            state = "finished"
+            drain = getattr(self.playback_sink, "wait_stream_drained", None)
+            try:
+                if drain is not None:
+                    async with asyncio.timeout(_DRAIN_TIMEOUT_SECONDS):
+                        await drain(stream_id)
+            except TimeoutError:
+                self.playback_sink.close_stream(stream_id)
+                state = "error"
+            if active_command is not command:
+                return
+            # Revoke the active reference before awaiting control delivery.
+            active_command = None
+            active_stream_id = None
+            playing_stream_id = None
+            active_cancel_target = None
+            assert notification_writer is not None
+            await notification_writer.send(
+                OutboundNotification(message=self._state_envelope(command, state))
+            )
+
+        def cancel_drain() -> None:
+            nonlocal drain_task
+            if drain_task is not None:
+                _ = drain_task.cancel()
+                drain_task = None
+
         binding.set_packet_handler(receive_packet)
 
         async def receive_control_message() -> str | None:
@@ -453,14 +493,13 @@ class ReceiveRuntime:
                         match event_type:
                             case "media.stream.command":
                                 candidate_command = _active_command(event)
-                                if active_command is not None:
-                                    if candidate_command == active_command:
-                                        continue
-                                    if (
-                                        candidate_command.cancellation_epoch
-                                        <= active_command.cancellation_epoch
-                                    ):
-                                        continue
+                                if candidate_command.cancellation_epoch < minimum_epoch:
+                                    continue
+                                if latest_command is not None and (
+                                    candidate_command.cancellation_epoch
+                                    <= latest_command.cancellation_epoch
+                                ):
+                                    continue
                                 active_stream_id = _announce_command(
                                     receiver=receiver,
                                     event=event,
@@ -469,6 +508,8 @@ class ReceiveRuntime:
                                 )
 
                                 if active_stream_id is not None:
+                                    cancel_drain()
+                                    latest_command = candidate_command
                                     active_command = candidate_command
 
                                     playing_stream_id = None
@@ -502,6 +543,7 @@ class ReceiveRuntime:
                                     _discard_queued_stream(
                                         playback_queue, active_stream_id
                                     )
+                                    cancel_drain()
                                     receiver.cancel_stream(active_stream_id)
 
                                     await notification_writer.invalidate_playing(
@@ -533,6 +575,8 @@ class ReceiveRuntime:
                                         acknowledgement.disposition
                                         is FlushDisposition.APPLIED
                                     ):
+                                        cancel_drain()
+                                        minimum_epoch = max(minimum_epoch, acknowledgement.cancellation_epoch)
                                         _discard_queued_stream(
                                             playback_queue,
                                             acknowledgement.stream_id,
@@ -576,60 +620,10 @@ class ReceiveRuntime:
                                     != active_command.cancellation_epoch
                                 ):
                                     continue
-                                # The final RTP packet was paced before this WSS
-                                # command. Allow it to reach UDP first, then drain
-                                # the actual PortAudio queue before reporting done.
-                                await asyncio.sleep(0.100)
-                                ingress_timing.log(stream_id=active_stream_id)
-                                if receiver.finish_stream(
-                                    active_stream_id, required_int(data, "ssrc")
-                                ):
-                                    completed_command = _ActiveCommand(
-                                        command_id=active_command.command_id,
-                                        trace_id=active_command.trace_id,
-                                        session_id=active_command.session_id,
-                                        seq=active_command.seq,
-                                        turn_id=active_command.turn_id,
-                                        segment_id=active_command.segment_id,
-                                        cancellation_epoch=required_int(
-                                            data, "cancellation_epoch"
-                                        ),
-                                        rtp_sender_endpoint=(
-                                            active_command.rtp_sender_endpoint
-                                        ),
+                                if drain_task is None or drain_task.done():
+                                    drain_task = task_group.create_task(
+                                        drain_output(active_command, active_stream_id, required_int(data, "ssrc"))
                                     )
-                                    drain = getattr(
-                                        self.playback_sink,
-                                        "wait_stream_drained",
-                                        None,
-                                    )
-                                    try:
-                                        if drain is not None:
-                                            async with asyncio.timeout(
-                                                _DRAIN_TIMEOUT_SECONDS
-                                            ):
-                                                await drain(active_stream_id)
-                                    except TimeoutError:
-                                        self.playback_sink.close_stream(active_stream_id)
-                                        await notification_writer.send(
-                                            OutboundNotification(
-                                                message=self._state_envelope(
-                                                    completed_command, "error"
-                                                )
-                                            )
-                                        )
-                                    else:
-                                        await notification_writer.send(
-                                            OutboundNotification(
-                                                message=self._state_envelope(
-                                                    completed_command, "finished"
-                                                )
-                                            )
-                                        )
-                                    active_stream_id = None
-                                    playing_stream_id = None
-                                    active_cancel_target = None
-                                    active_command = None
 
                             case _:
                                 pass
@@ -646,6 +640,12 @@ class ReceiveRuntime:
                     # first: that loses an authorized frame before Sound has
                     # had a chance to render it.
                     await playback_queue.join()
+                    if drain_task is not None:
+                        try:
+                            await drain_task
+                        except asyncio.CancelledError:
+                            cancel_drain()
+                            raise
                     notification_writer.close()
                     _ = playback_task.cancel()
                     _ = jitter_task.cancel()

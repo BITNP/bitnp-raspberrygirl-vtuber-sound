@@ -344,3 +344,15 @@ def test_callback_playback_drain_does_not_stop_the_final_pcm_block() -> None:
     with pytest.raises(Exception) as error:
         playback._callback(memoryview(bytearray(4)), 2, None, None)
     assert type(error.value).__name__ == "CallbackStop"
+
+
+def test_close_stream_aborts_a_callback_already_draining() -> None:
+    playback, stream = _callback_playback_for_test()
+    playback._drained = None
+    sink = PortAudioPlaybackSink(device=None)
+    sink._callback_streams[StreamId("draining")] = playback
+    sink.finish_stream("draining")
+    sink.close_stream("draining")
+    assert stream.aborted
+    assert stream.closed
+    assert not sink._draining_callbacks

@@ -433,3 +433,19 @@ def test_jitter_reorders_sequence_wrap_and_final_drain_ignores_target() -> None:
     )
     assert receiver.finish_stream("stream-short", 8) is True
     assert sink.frames[-1].payload == _frame(b"\x00\x05")
+
+
+def test_jitter_recovers_after_loss_exceeds_maximum_window() -> None:
+    sink = _RecordingPlaybackSink(frames=[], closed_streams=[])
+    receiver = ConcreteRtpPlaybackReceiver(
+        playback_sink=sink, jitter_target_ms=60, jitter_max_ms=200
+    )
+    receiver.announce_stream(
+        stream_id="recovery", sample_rate=16_000, channels=1, expected_ssrc=7
+    )
+    for sequence in (0, 1, 2, 13, 14, 15):
+        assert receiver.receive_packet(
+            _l16_rtp_packet(sequence * 320, b"\x00\x01", sequence=sequence)
+        )
+    assert len(sink.frames) == 6
+    assert not receiver.receive_packet(_l16_rtp_packet(960, b"\x00\x01", sequence=3))

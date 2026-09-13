@@ -969,3 +969,69 @@ async def test_receive_runtime_returns_correlated_flush_ack_for_announced_genera
         acknowledgement["turn_id"],
         acknowledgement["segment_id"],
     ) == ("trace-001", "session-001", 11, "turn-001", "sound-stream-001")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_command_cannot_be_reactivated_by_old_epoch() -> None:
+    old = json.loads(_command())
+    old["data"]["cancellation_epoch"] = 1
+    old["data"]["command_id"] = "old-command"
+    binding = _FakeUdpBinding()
+    binder = _FakeUdpBinder(binding)
+    connection = _FakeControlConnection([_command(), _cancel(), json.dumps(old)], binding)
+    runtime = ReceiveRuntime(
+        config=SoundReceiveConfig(
+            orchestrator_ws_url="wss://orchestrator.example.test/control",
+            trusted_lan_token="trusted-token", stream_id="sound-stream-001",
+            rtp_host="0.0.0.0", rtp_port=50_006,
+            advertised_rtp_host="sound.example.test", session_id="session-001",
+        ),
+        udp_binder=binder,
+        control_connector=_FakeControlConnector(connection, binder),
+        playback_sink=_RecordingSink(),
+    )
+    await runtime.run()
+    assert _state_values(connection.received) == ["queued", "cancelled"]
+
+
+@pytest.mark.asyncio
+async def test_flush_is_processed_while_physical_drain_is_pending() -> None:
+    started = asyncio.Event()
+    acknowledged = asyncio.Event()
+
+    class StalledSink(_RecordingSink):
+        async def wait_stream_drained(self, stream_id: str) -> None:
+            started.set()
+            await asyncio.Future[None]()
+
+    class Connection(_FakeControlConnection):
+        @override
+        async def recv(self) -> str | None:
+            if self.messages and self.messages[0] == _flush():
+                await started.wait()
+            return await super().recv()
+
+        @override
+        async def send(self, message: str) -> None:
+            await super().send(message)
+            if required_str(parse_event(message), "event_type") == "media.stream.flush.ack":
+                acknowledged.set()
+
+    binding = _FakeUdpBinding()
+    binder = _FakeUdpBinder(binding)
+    connection = Connection([_command(), "deliver", _end(), _flush()], binding)
+    runtime = ReceiveRuntime(
+        config=SoundReceiveConfig(
+            orchestrator_ws_url="wss://orchestrator.example.test/control",
+            trusted_lan_token="trusted-token", stream_id="sound-stream-001",
+            rtp_host="0.0.0.0", rtp_port=50_006,
+            advertised_rtp_host="sound.example.test", session_id="session-001",
+        ),
+        udp_binder=binder,
+        control_connector=_FakeControlConnector(connection, binder),
+        playback_sink=StalledSink(),
+    )
+    async with asyncio.timeout(1):
+        await runtime.run()
+    assert acknowledged.is_set()
+    assert "finished" not in _state_values(connection.received)

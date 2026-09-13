@@ -1,4 +1,5 @@
 
+import logging
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -7,6 +8,8 @@ from time import monotonic_ns
 from typing import Final, NewType, Protocol
 
 StreamId = NewType("StreamId", str)
+
+_LOGGER = logging.getLogger(__name__)
 
 RtpTimestamp = NewType("RtpTimestamp", int)
 
@@ -252,8 +255,20 @@ class RtpPlaybackReceiver:
             jitter.expected_sequence = parsed_packet.sequence
             expected = parsed_packet.sequence
         distance = (parsed_packet.sequence - expected) & 0xFFFF
-        if distance >= 0x8000 or distance >= self._max_frames:
+        if distance >= 0x8000:
             return False
+        if distance >= self._max_frames:
+            # Recover at the live edge after a discontinuity instead of
+            # permanently rejecting every subsequent packet against a frozen
+            # expected sequence. Never accumulate an unbounded silence backlog.
+            _LOGGER.debug(
+                "rtp_resynchronized stream=%s ssrc=%s seq=%s skipped=%s outcome=accepted",
+                resolved_stream_id, parsed_packet.ssrc, parsed_packet.sequence, distance,
+            )
+            jitter.packets.clear()
+            jitter.expected_sequence = parsed_packet.sequence
+            jitter.missing_since_ms = None
+            jitter.started = False
         if parsed_packet.sequence in jitter.packets:
             return False
         jitter.packets[parsed_packet.sequence] = parsed_packet
