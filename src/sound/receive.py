@@ -419,11 +419,9 @@ class ReceiveRuntime:
             if not receiver.finish_stream(stream_id, ssrc):
                 return
             state = "finished"
-            drain = getattr(self.playback_sink, "wait_stream_drained", None)
             try:
-                if drain is not None:
-                    async with asyncio.timeout(_DRAIN_TIMEOUT_SECONDS):
-                        await drain(stream_id)
+                async with asyncio.timeout(_DRAIN_TIMEOUT_SECONDS):
+                    await self.playback_sink.wait_stream_drained(stream_id)
             except TimeoutError:
                 self.playback_sink.close_stream(stream_id)
                 state = "error"

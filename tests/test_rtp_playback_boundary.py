@@ -61,6 +61,12 @@ class _RecordingPlaybackSink:
 
         self.closed_streams.append(stream_id)
 
+    def finish_stream(self, stream_id: str) -> None:
+        self.close_stream(stream_id)
+
+    async def wait_stream_drained(self, stream_id: str) -> None:
+        _ = stream_id
+
     def close(self) -> None:
 
         self.closed = True
@@ -76,6 +82,12 @@ class _FailingPlaybackSink:
 
     def close_stream(self, stream_id: str) -> None:
 
+        _ = stream_id
+
+    def finish_stream(self, stream_id: str) -> None:
+        self.close_stream(stream_id)
+
+    async def wait_stream_drained(self, stream_id: str) -> None:
         _ = stream_id
 
     def close(self) -> None:

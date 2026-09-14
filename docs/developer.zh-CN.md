@@ -30,3 +30,5 @@ Sound 通过 `ORCHESTRATOR_REPO` 引用 Orchestrator 的 `schemas/protocol/envel
 - 生产部署在 `ORCHESTRATOR_TLS_CA_PATH` 设置同一个只读 PEM CA bundle，用于校验 Orchestrator WSS 证书。该路径也由 Orchestrator、Mic、Comments 使用；主机系统信任库只是已安装相同 CA 时的可选替代。
 
 本地安装和测试见[用户文档](user.zh-CN.md)。受信任局域网 `ws://` 联调必须设置 `SOUND_ALLOW_LOOPBACK_WS=true`，并继续提供 Sound 专属 `TRUSTED_LAN_TOKEN`；集中步骤见[受信任局域网明文联调指南](../../bitnp-raspberrygirl-vtuber-orchestrator/docs/local-loopback.zh-CN.md)。真实部署验证应覆盖 sink 注册、命令匹配、RTP 播放、状态 envelope 和取消抑制。
+
+播放 adapter 必须显式实现 `finish_stream` 与 `wait_stream_drained`：前者结束输入并启动正常排空，后者在样本队列排空、设备回调停止且流关闭后返回。`close_stream` 用于取消；正常完成不得以取消代替。

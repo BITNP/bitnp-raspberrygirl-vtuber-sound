@@ -220,6 +220,12 @@ class _RecordingSink:
 
         _ = stream_id
 
+    def finish_stream(self, stream_id: str) -> None:
+        self.close_stream(stream_id)
+
+    async def wait_stream_drained(self, stream_id: str) -> None:
+        _ = stream_id
+
     def close(self) -> None:
 
         self.closed += 1

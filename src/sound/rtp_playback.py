@@ -66,6 +66,14 @@ class L16PlaybackSink(Protocol):
 
         ...
 
+    def finish_stream(self, stream_id: str) -> None:
+        """End input and start draining queued device samples."""
+        ...
+
+    async def wait_stream_drained(self, stream_id: str) -> None:
+        """Return after samples drain and the device stream stops and closes."""
+        ...
+
     def close(self) -> None:
 
         ...
@@ -214,11 +222,7 @@ class RtpPlaybackReceiver:
             self._streams[resolved_stream_id], status=StreamStatus.FINISHED
         )
         if self._playback_sink is not None:
-            finish_stream = getattr(self._playback_sink, "finish_stream", None)
-            if finish_stream is None:
-                self._playback_sink.close_stream(stream_id)
-            else:
-                finish_stream(stream_id)
+            self._playback_sink.finish_stream(stream_id)
         return True
 
     def receive_packet(self, packet: bytes, *, stream_id: str | None = None) -> bool:
