@@ -663,7 +663,7 @@ async def test_receive_runtime_reports_error_when_physical_drain_times_out(
         def close_stream(self, stream_id: str) -> None:
             self.closed_streams.append(stream_id)
 
-    monkeypatch.setattr("sound.receive._DRAIN_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("sound.playback_lifecycle._DRAIN_TIMEOUT_SECONDS", 0.01)
     binding = _FakeUdpBinding()
     binder = _FakeUdpBinder(binding=binding)
     connection = _FakeControlConnection(

@@ -1,7 +1,10 @@
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Protocol, final
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class ControlSender(Protocol):
@@ -123,10 +126,11 @@ class NotificationWriter:
                             completion.set_result(None)
 
                         self._pending_playing_streams.discard(notification.stream_id)
-
+                        _LOGGER.debug("sound_control payload=%s outcome=suppressed", notification.message)
                         continue
 
                     await self._connection.send(notification.message)
+                    _LOGGER.debug("sound_control payload=%s outcome=sent", notification.message)
 
                     if notification.is_playing and notification.stream_id is not None:
                         self._pending_playing_streams.discard(notification.stream_id)

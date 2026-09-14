@@ -32,3 +32,14 @@ Sound 通过 `ORCHESTRATOR_REPO` 引用 Orchestrator 的 `schemas/protocol/envel
 本地安装和测试见[用户文档](user.zh-CN.md)。受信任局域网 `ws://` 联调必须设置 `SOUND_ALLOW_LOOPBACK_WS=true`，并继续提供 Sound 专属 `TRUSTED_LAN_TOKEN`；集中步骤见[受信任局域网明文联调指南](../../bitnp-raspberrygirl-vtuber-orchestrator/docs/local-loopback.zh-CN.md)。真实部署验证应覆盖 sink 注册、命令匹配、RTP 播放、状态 envelope 和取消抑制。
 
 播放 adapter 必须显式实现 `finish_stream` 与 `wait_stream_drained`：前者结束输入并启动正常排空，后者在样本队列排空、设备回调停止且流关闭后返回。`close_stream` 用于取消；正常完成不得以取消代替。
+
+
+## 输出租约的播放生命周期
+
+`PlaybackLifecycle` 持有当前与最近播放命令、最低代次、RTP 队列、jitter 驱动、排空任务和播放通知；`ReceiveRuntime` 只持有连接、注册及重连，并将已解析控制事件和 UDP 包交给它。每次连接建立一个实例，退出时回收所有任务。
+
+正常连接结束保留有界 UDP 尾帧等待和设备排空；明确取消立即作废租约并回收排空任务。`media.stream.end` 必须匹配命令、代次及 SSRC，重复 end 不重复排空。物理排空完成或超时后再次核验租约身份，旧任务不能清除或关闭新播放。
+
+每个入队 RTP 包绑定接收时的租约身份；替换、取消和已应用的 flush 清除旧包。新租约的 ready/queued 发送完成后才发送 playing；通知发送等待者被取消不会使独立通知写入任务崩溃。flush 重放只重发回执，不重复作废新租约。
+
+生命周期测试通过真实输入 interface 配合可控设备排空信号，覆盖迟到完成、迟到超时、重复与错误 end、flush 重放、旧包失效、发送端验证及正常关闭的 UDP 尾帧；不依赖真人语音或真实音频设备。
