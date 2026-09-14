@@ -64,6 +64,11 @@ class NotificationWriter:
 
         return completion
 
+    async def begin_stream(self, stream_id: str) -> None:
+        """Retire queued notifications before allowing a new lease on this stream."""
+        await self.invalidate_playing(stream_id)
+        self._invalidated_playing_streams.discard(stream_id)
+
     def enqueue(self, notification: OutboundNotification) -> None:
 
         completion = asyncio.get_running_loop().create_future()
@@ -114,7 +119,8 @@ class NotificationWriter:
                         notification.is_playing
                         and notification.stream_id in self._invalidated_playing_streams
                     ):
-                        completion.set_result(None)
+                        if not completion.done():
+                            completion.set_result(None)
 
                         self._pending_playing_streams.discard(notification.stream_id)
 
@@ -125,7 +131,9 @@ class NotificationWriter:
                     if notification.is_playing and notification.stream_id is not None:
                         self._pending_playing_streams.discard(notification.stream_id)
 
-                    completion.set_result(None)
+                    if not completion.done():
+                        completion.set_result(None)
 
                 case _WriterBarrier(completion=completion):
-                    completion.set_result(None)
+                    if not completion.done():
+                        completion.set_result(None)

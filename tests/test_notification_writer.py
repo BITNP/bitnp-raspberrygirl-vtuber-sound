@@ -102,3 +102,35 @@ async def test_notification_writer_waits_for_inflight_playing_before_flush_ack()
     # Then: the in-flight playing notification is externally ordered before flush ack.
 
     assert sender.messages == ["playing", "flush-ack"]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_producer_does_not_break_subsequent_notifications() -> None:
+    sender = _BlockedSender()
+    writer = NotificationWriter(sender)
+    async with asyncio.timeout(2), asyncio.TaskGroup() as group:
+        group.create_task(writer.run())
+        producer = group.create_task(writer.send(OutboundNotification("playing")))
+        await sender.playing_started.wait()
+        producer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await producer
+        sender.release_playing.set()
+        await writer.send(OutboundNotification("next-command"))
+        writer.close()
+    assert sender.messages == ["playing", "next-command"]
+
+
+@pytest.mark.asyncio
+async def test_new_lease_reenables_playing_after_retiring_old_notifications() -> None:
+    sender = _BlockedSender()
+    sender.release_playing.set()
+    writer = NotificationWriter(sender)
+    async with asyncio.timeout(2), asyncio.TaskGroup() as group:
+        group.create_task(writer.run())
+        writer.enqueue(OutboundNotification("old-playing", "stream", is_playing=True))
+        await writer.begin_stream("stream")
+        writer.enqueue(OutboundNotification("new-playing", "stream", is_playing=True))
+        await writer.send(OutboundNotification("barrier"))
+        writer.close()
+    assert sender.messages == ["new-playing", "barrier"]
